@@ -7,7 +7,7 @@ import pandas as pd
 
 
 ds = load_dataset("SemEvalWorkshop/sem_eval_2010_task_8")
-nb = MultinomialNB(alpha=1.0)
+nb = MultinomialNB(alpha=0.25)
 
 vectorizer = CountVectorizer(
     max_features=10000, 
