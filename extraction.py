@@ -9,10 +9,12 @@ import pandas as pd
 ds = load_dataset("SemEvalWorkshop/sem_eval_2010_task_8")
 nb = MultinomialNB(alpha=0.25)
 
+for i in range(2):
+    print(ds["train"][i])
+
 vectorizer = CountVectorizer(
     max_features=10000, 
-    ngram_range=(1, 2),   
-    stop_words="english"  
+    ngram_range=(1, 2), 
 )
 
 X_train_vec = vectorizer.fit_transform(ds["train"]["sentence"])
@@ -25,8 +27,7 @@ nb.fit(X_train_vec, y_train)
 
 y_pred = nb.predict(X_test_vec)
 
-#print(classification_report(y_test, y_pred, 
-#                             target_names=list(ds["train"]["relation"].keys())))
+print(classification_report(y_test, y_pred))
 
 macro_f1 = f1_score(y_test, y_pred, average="macro")
 print(f"Macro F1: {macro_f1:.4f}")
