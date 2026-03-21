@@ -5,6 +5,7 @@ from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.metrics import classification_report, f1_score
 import pandas as pd
 import re
+import torch
 
 
 ds = load_dataset("SemEvalWorkshop/sem_eval_2010_task_8")
@@ -17,33 +18,39 @@ def _collapse_relations(batch):
 
 ds = ds.map(_collapse_relations, batched=True)
 
-vectorizer = CountVectorizer(
-    max_features=10000, 
-    ngram_range=(1, 2), 
-)
+# vectorizer = CountVectorizer(
+#     max_features=10000, 
+#     ngram_range=(1, 2), 
+# )
 
-X_train_vec = vectorizer.fit_transform(ds["train"]["sentence"])
-X_test_vec = vectorizer.transform(ds["test"]["sentence"])
+# X_train_vec = vectorizer.fit_transform(ds["train"]["sentence"])
+# X_test_vec = vectorizer.transform(ds["test"]["sentence"])
 
-y_train = ds["train"]["relation"]
-y_test = ds["test"]["relation"]
+# y_train = ds["train"]["relation"]
+# y_test = ds["test"]["relation"]
 
-nb.fit(X_train_vec, y_train)
+# nb.fit(X_train_vec, y_train)
 
-y_pred = nb.predict(X_test_vec)
+# y_pred = nb.predict(X_test_vec)
 
 # Evaluation
 
-print(classification_report(y_test, y_pred))
+# print(classification_report(y_test, y_pred))
 
-macro_f1 = f1_score(y_test, y_pred, average="macro")
-print(f"Macro F1: {macro_f1:.4f}")
+# macro_f1 = f1_score(y_test, y_pred, average="macro")
+# print(f"Macro F1: {macro_f1:.4f}")
 
 
 
-#tokenizer = RobertaTokenizer.from_pretrained("roberta-base")
-#model = RobertaForSequenceClassification.from_pretrained("roberta-base", num_labels=5)
+tokenizer = RobertaTokenizer.from_pretrained("roberta-base")
+model = RobertaForSequenceClassification.from_pretrained("roberta-base", num_labels=3)
 
-#for i in range(2):
-#    print(ds["train"]["relation"][i])
 
+def tokenize_function(examples):
+    return tokenizer(examples["sentence"], padding="max_length", truncation=True, return_tensors="pt")
+
+ds = ds.map(tokenize_function, batched=True)
+
+ds["relation"] = torch.tensor([1, 1, 1])
+outputs = model(**ds["train"])
+print(outputs)
