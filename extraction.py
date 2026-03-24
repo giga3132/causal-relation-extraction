@@ -1,5 +1,5 @@
 from datasets import load_dataset
-from transformers import RobertaTokenizer, RobertaForSequenceClassification
+from transformers import DataCollatorWithPadding, RobertaTokenizer, RobertaForSequenceClassification, Trainer, TrainingArguments
 from sklearn.naive_bayes import MultinomialNB
 from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.metrics import classification_report, f1_score
@@ -47,10 +47,19 @@ model = RobertaForSequenceClassification.from_pretrained("roberta-base", num_lab
 
 
 def tokenize_function(examples):
-    return tokenizer(examples["sentence"], padding="max_length", truncation=True, return_tensors="pt")
+    return tokenizer(examples["sentence"], padding="max_length", truncation=True)
 
-ds = ds.map(tokenize_function, batched=True)
+ds = ds.map(tokenize_function, batched=True,)
+data_collator = DataCollatorWithPadding(tokenizer=tokenizer)
 
-ds["relation"] = torch.tensor([1, 1, 1])
-outputs = model(**ds["train"])
-print(outputs)
+training_args = TrainingArguments("test-trainer")
+
+trainer = Trainer(
+    model=model,
+    args=training_args,
+    train_dataset=ds["train"],
+    eval_dataset=ds["test"],
+    data_collator=data_collator,
+)
+
+trainer.train()
