@@ -1,2 +1,15 @@
 .venv
 .vscode/
+checkpoint-*/
+runs/
+*.bin
+*.pt
+*.pth
+*.safetensors
+__pycache__/
+*.pyc
+.env
+*.csv
+*.tsv
+*.json
+*.jsonl

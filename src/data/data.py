@@ -10,5 +10,6 @@ def load_and_process(dataset_name):
         return {"relation": [map_rel(r) for r in batch["relation"]]}
 
     dataset = dataset.map(_collapse_relations, batched=True)
+    dataset = dataset.rename_column("relation", "labels")
 
     return dataset
