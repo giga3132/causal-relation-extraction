@@ -15,7 +15,7 @@ def tokenize_function(examples):
 semeval = semeval.map(tokenize_function, batched=True,)
 data_collator = DataCollatorWithPadding(tokenizer=tokenizer)
 
-training_args = TrainingArguments("test-trainer")
+training_args = TrainingArguments("outputs/roberta")
 
 trainer = Trainer(
     model=model,
