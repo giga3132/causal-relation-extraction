@@ -2,6 +2,7 @@ from transformers import DataCollatorWithPadding, RobertaTokenizer, RobertaForSe
 from src.data.data import load_and_process
 import numpy as np
 import evaluate
+import wandb
 
 
 def tokenize_function(examples):
@@ -21,7 +22,6 @@ def compute_metrics(eval_preds):
 
 # Load and preprocess the dataset
 semeval = load_and_process("SemEvalWorkshop/sem_eval_2010_task_8")
-print(semeval["train"][0])
 
 # Load metrics
 accuracy_metric = evaluate.load("accuracy")
@@ -36,15 +36,19 @@ model.resize_token_embeddings(len(tokenizer))
 semeval = semeval.map(tokenize_function, batched=True,)
 data_collator = DataCollatorWithPadding(tokenizer=tokenizer)
 
+# Initialize wandb for experiment tracking
+wandb.init(project="transformer-fine-tuning", name="roberta-analysis")
+
 
 # Training
 
 training_args = TrainingArguments("outputs/roberta", 
                                   eval_strategy="steps",
-                                  eval_steps=0.5,
-                                  logging_dir="outputs/roberta/logs",
-                                  logging_steps=10,
-                                  num_train_epochs=0.5)
+                                  eval_steps=50,
+                                  logging_steps=5,
+                                  num_train_epochs=0.5,
+                                  report_to="wandb"
+)
 
 trainer = Trainer(
     model=model,
