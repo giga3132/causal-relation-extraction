@@ -21,6 +21,7 @@ def compute_metrics(eval_preds):
 
 # Load and preprocess the dataset
 semeval = load_and_process("SemEvalWorkshop/sem_eval_2010_task_8")
+print(semeval["train"][0])
 
 # Load metrics
 accuracy_metric = evaluate.load("accuracy")
@@ -28,6 +29,9 @@ f1_metric = evaluate.load("f1")
 
 tokenizer = RobertaTokenizer.from_pretrained("distilroberta-base")
 model = RobertaForSequenceClassification.from_pretrained("distilroberta-base", num_labels=3)
+
+tokenizer.add_special_tokens({"additional_special_tokens": ["<e1>", "</e1>", "<e2>", "</e2>"]})
+model.resize_token_embeddings(len(tokenizer))
 
 semeval = semeval.map(tokenize_function, batched=True,)
 data_collator = DataCollatorWithPadding(tokenizer=tokenizer)
