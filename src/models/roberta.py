@@ -37,16 +37,18 @@ semeval = semeval.map(tokenize_function, batched=True,)
 data_collator = DataCollatorWithPadding(tokenizer=tokenizer)
 
 # Initialize wandb for experiment tracking
-wandb.init(project="transformer-fine-tuning", name="roberta-analysis")
+wandb.init(project="transformer-fine-tuning", name="roberta-analysis-2")
 
 
 # Training
 
 training_args = TrainingArguments("outputs/roberta", 
-                                  eval_strategy="steps",
-                                  eval_steps=50,
+                                  eval_strategy="epoch",
                                   logging_steps=5,
-                                  num_train_epochs=0.5,
+                                  num_train_epochs=3,
+                                  per_device_train_batch_size=4,
+                                  gradient_accumulation_steps=4,
+                                  fp16=True,
                                   report_to="wandb"
 )
 
