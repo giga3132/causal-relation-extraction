@@ -21,7 +21,7 @@ def compute_metrics(eval_preds):
 
 
 # Load and preprocess the dataset
-semeval = load_and_process("SemEvalWorkshop/sem_eval_2010_task_8", "roberta_collapsed")
+semeval = load_and_process("SemEvalWorkshop/sem_eval_2010_task_8")
 
 # Load metrics
 accuracy_metric = evaluate.load("accuracy")
