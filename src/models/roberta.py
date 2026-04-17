@@ -1,4 +1,5 @@
 from transformers import DataCollatorWithPadding, RobertaTokenizer, RobertaForSequenceClassification, Trainer, TrainingArguments
+from src.data.generate_k_shot import generate_k_shot_examples
 from src.data.data import load_and_process
 import numpy as np
 import evaluate
@@ -22,6 +23,9 @@ def compute_metrics(eval_preds):
 
 # Load and preprocess the dataset
 semeval = load_and_process("SemEvalWorkshop/sem_eval_2010_task_8")
+semeval_k_train = generate_k_shot_examples(semeval["train"], 5)
+print(semeval_k_train)
+print(semeval["train"])
 
 # Load metrics
 accuracy_metric = evaluate.load("accuracy")
@@ -34,18 +38,20 @@ tokenizer.add_special_tokens({"additional_special_tokens": ["<e1>", "</e1>", "<e
 model.resize_token_embeddings(len(tokenizer))
 
 semeval = semeval.map(tokenize_function, batched=True,)
+semeval_k_train = semeval_k_train.map(tokenize_function, batched=True,)
 data_collator = DataCollatorWithPadding(tokenizer=tokenizer)
 
+
 # Initialize wandb for experiment tracking
-wandb.init(project="transformer-fine-tuning", name="roberta-analysis-2")
+wandb.init(project="transformer-fine-tuning", name="roberta-5-shot-test")
 
 
 # Training
 
 training_args = TrainingArguments("outputs/roberta", 
                                   eval_strategy="epoch",
-                                  logging_steps=5,
-                                  num_train_epochs=3,
+                                  logging_steps=20,
+                                  num_train_epochs=5,
                                   per_device_train_batch_size=4,
                                   gradient_accumulation_steps=4,
                                   fp16=True,
@@ -55,7 +61,7 @@ training_args = TrainingArguments("outputs/roberta",
 trainer = Trainer(
     model=model,
     args=training_args,
-    train_dataset=semeval["train"],
+    train_dataset=semeval_k_train,
     eval_dataset=semeval["test"],
     data_collator=data_collator,
     processing_class=tokenizer,
