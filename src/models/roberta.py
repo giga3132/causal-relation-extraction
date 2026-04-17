@@ -7,7 +7,7 @@ import wandb
 
 def tokenize_function(examples):
     '''Tokenizes the input sentences.'''
-    return tokenizer(examples["sentence"], padding="max_length", truncation=True)
+    return tokenizer(examples["sentence"], truncation=True)
 
 def compute_metrics(eval_preds):
     logits, labels = eval_preds
@@ -27,8 +27,8 @@ semeval = load_and_process("SemEvalWorkshop/sem_eval_2010_task_8")
 accuracy_metric = evaluate.load("accuracy")
 f1_metric = evaluate.load("f1")
 
-tokenizer = RobertaTokenizer.from_pretrained("distilroberta-base")
-model = RobertaForSequenceClassification.from_pretrained("distilroberta-base", num_labels=3)
+tokenizer = RobertaTokenizer.from_pretrained("roberta-base")
+model = RobertaForSequenceClassification.from_pretrained("roberta-base", num_labels=3)
 
 tokenizer.add_special_tokens({"additional_special_tokens": ["<e1>", "</e1>", "<e2>", "</e2>"]})
 model.resize_token_embeddings(len(tokenizer))
