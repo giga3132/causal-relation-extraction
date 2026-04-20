@@ -1,21 +1,17 @@
-from collections import Counter
+from collections import Counter, defaultdict
 import numpy as np
 
 def generate_k_shot_examples(dataset, k):
     """Generates k-shot examples from the dataset."""
 
-    np.random.seed(42)  # For reproducibility
-    dataset = dataset.shuffle(seed=42)
+    indexes_per_class = defaultdict(list)
+    for idx, label in enumerate(dataset["labels"]):
+        indexes_per_class[label].append(idx)
 
-    full_counts = Counter(dataset["labels"])
-    print("Full count:" + str(full_counts))
-    counts = {label: 0 for label in full_counts}
-    print("Zero count:" + str(counts))
+    selected_indexes = []
+    for label, indexes in indexes_per_class.items():
+        selected_indexes.extend(np.random.choice(indexes, size=k, replace=False))
 
-    k_shot_examples = []
-    for label in counts:
-        while counts[label] < k:
-            k_shot_examples.append(dataset.filter(lambda x: x["labels"] == label)[counts[label]])
-            counts[label] += 1
-    print("K-shot examples:" + str(k_shot_examples))
+    k_shot_examples = dataset.select(selected_indexes)
+
     return k_shot_examples

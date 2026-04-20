@@ -23,9 +23,8 @@ def compute_metrics(eval_preds):
 
 # Load and preprocess the dataset
 semeval = load_and_process("SemEvalWorkshop/sem_eval_2010_task_8")
-semeval_k_train = generate_k_shot_examples(semeval["train"], 5)
-print(semeval_k_train)
-print(semeval["train"])
+semeval_k_train = generate_k_shot_examples(semeval["train"], 16)
+print(f"Number of training examples: {len(semeval_k_train)}")
 
 # Load metrics
 accuracy_metric = evaluate.load("accuracy")
@@ -43,7 +42,7 @@ data_collator = DataCollatorWithPadding(tokenizer=tokenizer)
 
 
 # Initialize wandb for experiment tracking
-wandb.init(project="transformer-fine-tuning", name="roberta-5-shot-test")
+wandb.init(project="transformer-fine-tuning", name="roberta-16-shot-test-3")
 
 
 # Training
