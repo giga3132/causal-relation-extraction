@@ -54,7 +54,7 @@ training_args = TrainingArguments("outputs/roberta",
                                   per_device_train_batch_size=4,
                                   gradient_accumulation_steps=4,
                                   fp16=True,
-                                  report_to="wandb"
+                                #   report_to="wandb"
 )
 
 trainer = Trainer(

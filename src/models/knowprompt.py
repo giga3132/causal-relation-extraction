@@ -1,7 +1,10 @@
-from transformers import DataCollatorWithPadding, RobertaTokenizer, RobertaForSequenceClassification, Trainer, TrainingArguments
+from transformers import DataCollatorWithPadding, RobertaTokenizer, RobertaForSequenceClassification, get_scheduler, Trainer, TrainingArguments
 from src.data.generate_k_shot import generate_k_shot_examples
 from src.data.data import load_and_process
+import torch
 from torch.utils.data import DataLoader
+from torch.optim import AdamW
+from tqdm.auto import tqdm
 import numpy as np
 import evaluate
 import wandb
@@ -49,10 +52,35 @@ k_train_dataloader = DataLoader(semeval_k_train, shuffle=True, batch_size=8, col
 
 eval_dataloader = DataLoader(semeval["test"], batch_size=8, collate_fn=data_collator)
 
-for id, batch in enumerate(semeval_k_train):
-    break
-print (batch.items())
-print({k: v.shape for k, v in batch.items()})
+optimizer = AdamW(model.parameters(), lr=5e-5)
+
+num_epochs = 5
+num_training_steps = num_epochs * len(k_train_dataloader)
+lr_scheduler = get_scheduler(
+        "linear",
+        optimizer=optimizer,
+        num_warmup_steps=0,
+        num_training_steps=num_training_steps
+)
+
+device = torch.device("cuda") 
+model.to(device)
+
+
+model.train()
+for epoch in range(num_epochs):
+    progress_bar = tqdm(range(len(k_train_dataloader)), leave=False)
+    for batch in k_train_dataloader:
+        batch = {k: v.to(device) for k, v in batch.items()}
+        outputs = model(**batch)
+        loss = outputs.loss
+        loss.backward()
+
+        optimizer.step()
+        lr_scheduler.step()
+        optimizer.zero_grad()
+        progress_bar.update(1)
+
 
 
 # Initialize wandb for experiment tracking
