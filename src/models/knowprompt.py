@@ -8,6 +8,7 @@ from tqdm.auto import tqdm
 import numpy as np
 import evaluate
 import wandb
+import time
 
 
 def tokenize_function(examples):
@@ -27,7 +28,8 @@ def compute_metrics(eval_preds):
 
 # Load and preprocess the dataset
 semeval = load_and_process("SemEvalWorkshop/sem_eval_2010_task_8")
-semeval_k_train = generate_k_shot_examples(semeval["train"], 16)
+semeval_k_train = generate_k_shot_examples(semeval["train"], 256)
+print(f"Number of training examples: {len(semeval_k_train)}")
 
 # Load metrics
 accuracy_metric = evaluate.load("accuracy")
@@ -48,7 +50,7 @@ semeval_k_train.set_format("torch")
 
 data_collator = DataCollatorWithPadding(tokenizer=tokenizer)
 
-k_train_dataloader = DataLoader(semeval_k_train, shuffle=True, batch_size=8, collate_fn=data_collator)
+k_train_dataloader = DataLoader(semeval_k_train, shuffle=True, batch_size=16, collate_fn=data_collator)
 
 eval_dataloader = DataLoader(semeval["test"], batch_size=8, collate_fn=data_collator)
 
@@ -63,23 +65,67 @@ lr_scheduler = get_scheduler(
         num_training_steps=num_training_steps
 )
 
-device = torch.device("cuda") 
+device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 model.to(device)
 
 
-model.train()
-for epoch in range(num_epochs):
-    progress_bar = tqdm(range(len(k_train_dataloader)), leave=False)
-    for batch in k_train_dataloader:
-        batch = {k: v.to(device) for k, v in batch.items()}
-        outputs = model(**batch)
-        loss = outputs.loss
-        loss.backward()
+with tqdm(range(num_training_steps), desc="Training", position=1, leave=True) as progress_bar:
+    for epoch in range(num_epochs):
+        # ── Training ──────────────────────────────────────────────
 
-        optimizer.step()
-        lr_scheduler.step()
-        optimizer.zero_grad()
-        progress_bar.update(1)
+        model.train()
+        for batch in k_train_dataloader:
+            batch = {k: v.to(device) for k, v in batch.items()}
+            outputs = model(**batch)
+            loss = outputs.loss
+            loss.backward()
+
+            optimizer.step()
+            lr_scheduler.step()
+            optimizer.zero_grad()
+            progress_bar.update(1)
+
+        # ── Evaluation ───────────────────────────────────
+
+        model.eval()
+        all_logits, all_labels = [], []
+        eval_loss = 0.0
+        num_eval_steps = len(eval_dataloader)
+        num_eval_samples = len(semeval["test"])
+
+        eval_bar = tqdm(eval_dataloader, 
+                        desc=f"Evaluating epoch {epoch + 1}", 
+                        position=0, 
+                        leave=False)
+
+        eval_start = time.time()
+
+        with torch.no_grad():
+            for batch in eval_bar:
+                batch = {k: v.to(device) for k, v in batch.items()}
+                outputs = model(**batch)
+
+                eval_loss += outputs.loss.item()
+                all_logits.append(outputs.logits.cpu().numpy())
+                all_labels.append(batch["labels"].cpu().numpy())
+
+        eval_runtime = time.time() - eval_start
+
+        all_logits = np.concatenate(all_logits, axis=0)
+        all_labels = np.concatenate(all_labels, axis=0)
+        metrics = compute_metrics((all_logits, all_labels))
+
+        eval_metrics = {
+            "eval_loss":                 f"{eval_loss / num_eval_steps:.4f}",
+            "eval_accuracy":             f"{metrics['accuracy']:.4f}",
+            "eval_f1":                   f"{metrics['f1']:.4f}",
+            "eval_runtime":              f"{eval_runtime:.3f}",
+            "eval_samples_per_second":   f"{num_eval_samples / eval_runtime:.2f}",
+            "eval_steps_per_second":     f"{num_eval_steps / eval_runtime:.2f}",
+            "epoch":                     f"{epoch + 1}",
+        }
+
+        tqdm.write(str(eval_metrics))
 
 
 

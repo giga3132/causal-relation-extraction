@@ -23,7 +23,7 @@ def compute_metrics(eval_preds):
 
 # Load and preprocess the dataset
 semeval = load_and_process("SemEvalWorkshop/sem_eval_2010_task_8")
-semeval_k_train = generate_k_shot_examples(semeval["train"], 16)
+semeval_k_train = generate_k_shot_examples(semeval["train"], 256)
 print(f"Number of training examples: {len(semeval_k_train)}")
 
 # Load metrics
