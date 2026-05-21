@@ -1,7 +1,8 @@
-from transformers import DataCollatorWithPadding, RobertaTokenizer, RobertaForSequenceClassification, get_scheduler, Trainer, TrainingArguments
+from transformers import DataCollatorWithPadding, RobertaTokenizer, RobertaModel, get_scheduler, Trainer, TrainingArguments
 from src.data.generate_k_shot import generate_k_shot_examples
 from src.data.data import load_and_process
 import torch
+import torch.nn as nn
 from torch.utils.data import DataLoader
 from torch.optim import AdamW
 from tqdm.auto import tqdm
@@ -10,6 +11,8 @@ import evaluate
 import wandb
 import time
 
+num_labels = 3
+num_epochs = 3
 
 def tokenize_function(examples):
     '''Tokenizes the input sentences.'''
@@ -28,7 +31,7 @@ def compute_metrics(eval_preds):
 
 # Load and preprocess the dataset
 semeval = load_and_process("SemEvalWorkshop/sem_eval_2010_task_8")
-semeval_k_train = generate_k_shot_examples(semeval["train"], 256)
+semeval_k_train = generate_k_shot_examples(semeval["train"], 16)
 print(f"Number of training examples: {len(semeval_k_train)}")
 
 # Load metrics
@@ -36,7 +39,8 @@ accuracy_metric = evaluate.load("accuracy")
 f1_metric = evaluate.load("f1")
 
 tokenizer = RobertaTokenizer.from_pretrained("roberta-base")
-model = RobertaForSequenceClassification.from_pretrained("roberta-base", num_labels=3)
+model = RobertaModel.from_pretrained("roberta-base")
+classifier = nn.Linear(768, num_labels)
 
 tokenizer.add_special_tokens({"additional_special_tokens": ["<e1>", "</e1>", "<e2>", "</e2>"]})
 model.resize_token_embeddings(len(tokenizer))
@@ -50,13 +54,12 @@ semeval_k_train.set_format("torch")
 
 data_collator = DataCollatorWithPadding(tokenizer=tokenizer)
 
-k_train_dataloader = DataLoader(semeval_k_train, shuffle=True, batch_size=16, collate_fn=data_collator)
+k_train_dataloader = DataLoader(semeval_k_train, shuffle=True, batch_size=1, collate_fn=data_collator)
 
 eval_dataloader = DataLoader(semeval["test"], batch_size=8, collate_fn=data_collator)
 
 optimizer = AdamW(model.parameters(), lr=5e-5)
 
-num_epochs = 5
 num_training_steps = num_epochs * len(k_train_dataloader)
 lr_scheduler = get_scheduler(
         "linear",
@@ -67,6 +70,7 @@ lr_scheduler = get_scheduler(
 
 device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 model.to(device)
+classifier.to(device)
 
 
 with tqdm(range(num_training_steps), desc="Training", position=1, leave=True) as progress_bar:
@@ -77,6 +81,10 @@ with tqdm(range(num_training_steps), desc="Training", position=1, leave=True) as
         for batch in k_train_dataloader:
             batch = {k: v.to(device) for k, v in batch.items()}
             outputs = model(**batch)
+            cls_hidden = outputs.last_hidden_state[:, 0, :]
+            print(cls_hidden.shape)
+            logits = classifier(cls_hidden)
+            print(logits)
             loss = outputs.loss
             loss.backward()
 
