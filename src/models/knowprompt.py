@@ -31,7 +31,7 @@ def compute_metrics(eval_preds):
 
 # Load and preprocess the dataset
 semeval = load_and_process("SemEvalWorkshop/sem_eval_2010_task_8")
-semeval_k_train = generate_k_shot_examples(semeval["train"], 16)
+semeval_k_train = generate_k_shot_examples(semeval["train"], 256)
 print(f"Number of training examples: {len(semeval_k_train)}")
 
 # Load metrics
@@ -54,11 +54,11 @@ semeval_k_train.set_format("torch")
 
 data_collator = DataCollatorWithPadding(tokenizer=tokenizer)
 
-k_train_dataloader = DataLoader(semeval_k_train, shuffle=True, batch_size=1, collate_fn=data_collator)
+k_train_dataloader = DataLoader(semeval_k_train, shuffle=True, batch_size=16, collate_fn=data_collator)
 
 eval_dataloader = DataLoader(semeval["test"], batch_size=8, collate_fn=data_collator)
 
-optimizer = AdamW(model.parameters(), lr=5e-5)
+optimizer = AdamW(list(model.parameters()) + list(classifier.parameters()), lr=5e-5)
 
 num_training_steps = num_epochs * len(k_train_dataloader)
 lr_scheduler = get_scheduler(
@@ -78,14 +78,13 @@ with tqdm(range(num_training_steps), desc="Training", position=1, leave=True) as
         # ── Training ──────────────────────────────────────────────
 
         model.train()
+        classifier.train()
         for batch in k_train_dataloader:
             batch = {k: v.to(device) for k, v in batch.items()}
             outputs = model(**batch)
             cls_hidden = outputs.last_hidden_state[:, 0, :]
-            print(cls_hidden.shape)
             logits = classifier(cls_hidden)
-            print(logits)
-            loss = outputs.loss
+            loss = nn.CrossEntropyLoss()(logits, batch["labels"])
             loss.backward()
 
             optimizer.step()
@@ -96,6 +95,7 @@ with tqdm(range(num_training_steps), desc="Training", position=1, leave=True) as
         # ── Evaluation ───────────────────────────────────
 
         model.eval()
+        classifier.eval()
         all_logits, all_labels = [], []
         eval_loss = 0.0
         num_eval_steps = len(eval_dataloader)
@@ -112,15 +112,19 @@ with tqdm(range(num_training_steps), desc="Training", position=1, leave=True) as
             for batch in eval_bar:
                 batch = {k: v.to(device) for k, v in batch.items()}
                 outputs = model(**batch)
+                cls_hidden = outputs.last_hidden_state[:, 0, :]
+                logits = classifier(cls_hidden)
+                loss = nn.CrossEntropyLoss()(logits, batch["labels"])
 
-                eval_loss += outputs.loss.item()
-                all_logits.append(outputs.logits.cpu().numpy())
+                eval_loss += loss.item()
+                all_logits.append(logits.cpu().numpy())
                 all_labels.append(batch["labels"].cpu().numpy())
 
         eval_runtime = time.time() - eval_start
 
         all_logits = np.concatenate(all_logits, axis=0)
         all_labels = np.concatenate(all_labels, axis=0)
+
         metrics = compute_metrics((all_logits, all_labels))
 
         eval_metrics = {
