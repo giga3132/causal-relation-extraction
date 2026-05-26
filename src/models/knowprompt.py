@@ -1,4 +1,4 @@
-from transformers import DataCollatorWithPadding, RobertaTokenizer, RobertaModel, get_scheduler, Trainer, TrainingArguments
+from transformers import DataCollatorWithPadding, RobertaTokenizer, RobertaForMaskedLM, get_scheduler, Trainer, TrainingArguments
 from src.data.generate_k_shot import generate_k_shot_examples
 from src.data.data import load_and_process
 import torch
@@ -15,8 +15,9 @@ num_labels = 3
 num_epochs = 3
 
 def tokenize_function(examples):
-    '''Tokenizes the input sentences.'''
-    return tokenizer(examples["sentence"], truncation=True)
+    '''Tokenizes the input sentences with a prompt template.'''
+    templated_sentences = [f"{s} The relation is {tokenizer.mask_token}." for s in examples["sentence"]]
+    return tokenizer(templated_sentences, truncation=True, padding="max_length", max_length=128)
 
 def compute_metrics(eval_preds):
     logits, labels = eval_preds
@@ -39,11 +40,14 @@ accuracy_metric = evaluate.load("accuracy")
 f1_metric = evaluate.load("f1")
 
 tokenizer = RobertaTokenizer.from_pretrained("roberta-base")
-model = RobertaModel.from_pretrained("roberta-base")
-classifier = nn.Linear(768, num_labels)
+model = RobertaForMaskedLM.from_pretrained("roberta-base")
 
 tokenizer.add_special_tokens({"additional_special_tokens": ["<e1>", "</e1>", "<e2>", "</e2>"]})
 model.resize_token_embeddings(len(tokenizer))
+
+
+verbalizer_tokens = ["cause", "effect", "other"]
+label_word_ids = tokenizer.convert_tokens_to_ids(verbalizer_tokens)
 
 # Tokenize datasets
 semeval = semeval.map(tokenize_function, batched=True,remove_columns="sentence")
@@ -54,11 +58,11 @@ semeval_k_train.set_format("torch")
 
 data_collator = DataCollatorWithPadding(tokenizer=tokenizer)
 
-k_train_dataloader = DataLoader(semeval_k_train, shuffle=True, batch_size=16, collate_fn=data_collator)
+k_train_dataloader = DataLoader(semeval_k_train, shuffle=True, batch_size=4, collate_fn=data_collator)
 
 eval_dataloader = DataLoader(semeval["test"], batch_size=8, collate_fn=data_collator)
 
-optimizer = AdamW(list(model.parameters()) + list(classifier.parameters()), lr=5e-5)
+optimizer = AdamW(model.parameters(), lr=5e-5)
 
 num_training_steps = num_epochs * len(k_train_dataloader)
 lr_scheduler = get_scheduler(
@@ -70,7 +74,6 @@ lr_scheduler = get_scheduler(
 
 device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 model.to(device)
-classifier.to(device)
 
 
 with tqdm(range(num_training_steps), desc="Training", position=1, leave=True) as progress_bar:
@@ -78,12 +81,18 @@ with tqdm(range(num_training_steps), desc="Training", position=1, leave=True) as
         # ── Training ──────────────────────────────────────────────
 
         model.train()
-        classifier.train()
         for batch in k_train_dataloader:
             batch = {k: v.to(device) for k, v in batch.items()}
-            outputs = model(**batch)
-            cls_hidden = outputs.last_hidden_state[:, 0, :]
-            logits = classifier(cls_hidden)
+            
+            mask_pos = (batch["input_ids"] == tokenizer.mask_token_id).nonzero(as_tuple=True)[1]
+            
+            outputs = model(
+                input_ids=batch["input_ids"],
+                attention_mask=batch["attention_mask"]
+            )
+            mask_logits = outputs.logits[torch.arange(batch["input_ids"].size(0)), mask_pos]
+            logits = mask_logits[:, label_word_ids]
+            
             loss = nn.CrossEntropyLoss()(logits, batch["labels"])
             loss.backward()
 
@@ -95,7 +104,6 @@ with tqdm(range(num_training_steps), desc="Training", position=1, leave=True) as
         # ── Evaluation ───────────────────────────────────
 
         model.eval()
-        classifier.eval()
         all_logits, all_labels = [], []
         eval_loss = 0.0
         num_eval_steps = len(eval_dataloader)
@@ -111,9 +119,16 @@ with tqdm(range(num_training_steps), desc="Training", position=1, leave=True) as
         with torch.no_grad():
             for batch in eval_bar:
                 batch = {k: v.to(device) for k, v in batch.items()}
-                outputs = model(**batch)
-                cls_hidden = outputs.last_hidden_state[:, 0, :]
-                logits = classifier(cls_hidden)
+                
+                mask_pos = (batch["input_ids"] == tokenizer.mask_token_id).nonzero(as_tuple=True)[1]
+                
+                outputs = model(
+                    input_ids=batch["input_ids"],
+                    attention_mask=batch["attention_mask"]
+                )
+                mask_logits = outputs.logits[torch.arange(batch["input_ids"].size(0)), mask_pos]
+                logits = mask_logits[:, label_word_ids]
+                
                 loss = nn.CrossEntropyLoss()(logits, batch["labels"])
 
                 eval_loss += loss.item()
@@ -166,4 +181,3 @@ with tqdm(range(num_training_steps), desc="Training", position=1, leave=True) as
 #     processing_class=tokenizer,
 #     compute_metrics=compute_metrics,
 # )
-
