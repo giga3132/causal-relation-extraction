@@ -41,6 +41,7 @@ f1_metric = evaluate.load("f1")
 
 tokenizer = RobertaTokenizer.from_pretrained("roberta-base")
 model = RobertaForMaskedLM.from_pretrained("roberta-base")
+embeddings = nn.Embedding(num_labels, 768)
 
 tokenizer.add_special_tokens({"additional_special_tokens": ["<e1>", "</e1>", "<e2>", "</e2>"]})
 model.resize_token_embeddings(len(tokenizer))
@@ -84,13 +85,16 @@ with tqdm(range(num_training_steps), desc="Training", position=1, leave=True) as
         for batch in k_train_dataloader:
             batch = {k: v.to(device) for k, v in batch.items()}
             
+             # batch["inputs_id"] is (batch_size, seq_length), take boolean array with positions of masks, and then take tensor with mask positions.
             mask_pos = (batch["input_ids"] == tokenizer.mask_token_id).nonzero(as_tuple=True)[1]
             
             outputs = model(
                 input_ids=batch["input_ids"],
                 attention_mask=batch["attention_mask"]
             )
+            # (batch_size, vocab_size)
             mask_logits = outputs.logits[torch.arange(batch["input_ids"].size(0)), mask_pos]
+            # Grab logits for each vocabulary word, shape (batch_size, num_labels)
             logits = mask_logits[:, label_word_ids]
             
             loss = nn.CrossEntropyLoss()(logits, batch["labels"])
