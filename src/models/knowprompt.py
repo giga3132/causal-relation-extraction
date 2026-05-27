@@ -1,4 +1,4 @@
-from transformers import DataCollatorWithPadding, RobertaTokenizer, RobertaForMaskedLM, get_scheduler, Trainer, TrainingArguments
+from transformers import DataCollatorWithPadding, RobertaTokenizer, RobertaModel, get_scheduler, Trainer, TrainingArguments
 from src.data.generate_k_shot import generate_k_shot_examples
 from src.data.data import load_and_process
 import torch
@@ -40,15 +40,12 @@ accuracy_metric = evaluate.load("accuracy")
 f1_metric = evaluate.load("f1")
 
 tokenizer = RobertaTokenizer.from_pretrained("roberta-base")
-model = RobertaForMaskedLM.from_pretrained("roberta-base")
-embeddings = nn.Embedding(num_labels, 768)
+model = RobertaModel.from_pretrained("roberta-base")
+answer_words = nn.Embedding(num_labels, 768)
 
 tokenizer.add_special_tokens({"additional_special_tokens": ["<e1>", "</e1>", "<e2>", "</e2>"]})
 model.resize_token_embeddings(len(tokenizer))
 
-
-verbalizer_tokens = ["cause", "effect", "other"]
-label_word_ids = tokenizer.convert_tokens_to_ids(verbalizer_tokens)
 
 # Tokenize datasets
 semeval = semeval.map(tokenize_function, batched=True,remove_columns="sentence")
@@ -75,7 +72,7 @@ lr_scheduler = get_scheduler(
 
 device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 model.to(device)
-
+answer_words.to(device)
 
 with tqdm(range(num_training_steps), desc="Training", position=1, leave=True) as progress_bar:
     for epoch in range(num_epochs):
@@ -93,9 +90,9 @@ with tqdm(range(num_training_steps), desc="Training", position=1, leave=True) as
                 attention_mask=batch["attention_mask"]
             )
             # (batch_size, vocab_size)
-            mask_logits = outputs.logits[torch.arange(batch["input_ids"].size(0)), mask_pos]
-            # Grab logits for each vocabulary word, shape (batch_size, num_labels)
-            logits = mask_logits[:, label_word_ids]
+            mask_hidden = outputs.last_hidden_state[torch.arange(batch["input_ids"].size(0)), mask_pos]
+
+            logits = torch.matmul(mask_hidden, answer_words.weight.T)
             
             loss = nn.CrossEntropyLoss()(logits, batch["labels"])
             loss.backward()
@@ -130,8 +127,10 @@ with tqdm(range(num_training_steps), desc="Training", position=1, leave=True) as
                     input_ids=batch["input_ids"],
                     attention_mask=batch["attention_mask"]
                 )
-                mask_logits = outputs.logits[torch.arange(batch["input_ids"].size(0)), mask_pos]
-                logits = mask_logits[:, label_word_ids]
+                # (batch_size, vocab_size)
+                mask_hidden = outputs.last_hidden_state[torch.arange(batch["input_ids"].size(0)), mask_pos]
+
+                logits = torch.matmul(mask_hidden, answer_words.weight.T)
                 
                 loss = nn.CrossEntropyLoss()(logits, batch["labels"])
 
