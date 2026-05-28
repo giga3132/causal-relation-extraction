@@ -3,6 +3,7 @@ from src.data.generate_k_shot import generate_k_shot_examples
 from src.data.data import load_and_process
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from torch.optim import AdamW
 from tqdm.auto import tqdm
@@ -12,7 +13,7 @@ import wandb
 import time
 
 num_labels = 3
-num_epochs = 3
+num_epochs = 5
 
 def tokenize_function(examples):
     '''Tokenizes the input sentences with a prompt template.'''
@@ -41,13 +42,63 @@ f1_metric = evaluate.load("f1")
 
 tokenizer = RobertaTokenizer.from_pretrained("roberta-base")
 model = RobertaModel.from_pretrained("roberta-base")
-answer_words = nn.Embedding(num_labels, 768)
 
 tokenizer.add_special_tokens({"additional_special_tokens": ["<e1>", "</e1>", "<e2>", "</e2>"]})
 model.resize_token_embeddings(len(tokenizer))
 
+# ── Verbalizer ──────────────────────────────────────────
+answer_words = nn.Embedding(num_labels, 768)
 
-# Tokenize datasets
+relation_labels = ["Cause-Effect(e1,e2)", "Cause-Effect(e2,e1)", "Other"]
+label_descriptions = {
+    "Cause-Effect(e1,e2)": "the first entity causes or produces the second entity",
+    "Cause-Effect(e2,e1)": "the second entity causes or produces the first entity",
+    "Other": "no causal or directional relation between the entities"
+}
+
+# Initialize answer_words embeddings
+with torch.no_grad():
+    for i, label in enumerate(relation_labels):
+        description = label_descriptions[label]
+        tokens = tokenizer(description, return_tensors="pt")
+        token_embeddings = model.embeddings.word_embeddings(tokens.input_ids)
+        avg = token_embeddings.mean(dim=1).squeeze(0)
+        answer_words.weight.data[i] = avg
+
+#Verify initialization
+v0 = answer_words.weight.data[0]  # Cause-Effect(e1,e2)
+v1 = answer_words.weight.data[1]  # Cause-Effect(e2,e1)
+v2 = answer_words.weight.data[2]  # Other
+
+print(F.cosine_similarity(v0.unsqueeze(0), v1.unsqueeze(0)))
+print(F.cosine_similarity(v0.unsqueeze(0), v2.unsqueeze(0)))
+
+# ── Virtual type words ──────────────────────────────────────────
+type_descriptions = {
+    "<e1>":   ["start", "first", "entity"],
+    "</e1>":  ["end", "first", "entity"],
+    "<e2>":   ["start", "second", "entity"],
+    "</e2>":  ["end", "second", "entity"],
+}
+
+with torch.no_grad():
+    for marker, words in type_descriptions.items():
+        marker_id = tokenizer.convert_tokens_to_ids(marker)
+        word_ids = []
+        for word in words:
+            word_ids.extend(tokenizer.encode(word, add_special_tokens=False))
+        
+        avg = model.embeddings.word_embeddings.weight.data[word_ids].mean(dim=0)
+        model.embeddings.word_embeddings.weight.data[marker_id] = avg
+
+# Verify initialization
+e1_id = tokenizer.convert_tokens_to_ids("<e1>")
+entity_id = tokenizer.encode("entity", add_special_tokens=False)[0]
+e1_emb = model.embeddings.word_embeddings.weight.data[e1_id]
+entity_emb = model.embeddings.word_embeddings.weight.data[entity_id]
+print(f"Similarity <e1> to 'entity': {F.cosine_similarity(e1_emb.unsqueeze(0), entity_emb.unsqueeze(0)).item():.4f}")
+
+# ── Tokenize datasets ───────────────────────────────────────────────────────
 semeval = semeval.map(tokenize_function, batched=True,remove_columns="sentence")
 semeval_k_train = semeval_k_train.map(tokenize_function, batched = True, remove_columns="sentence")
 
@@ -56,11 +107,12 @@ semeval_k_train.set_format("torch")
 
 data_collator = DataCollatorWithPadding(tokenizer=tokenizer)
 
+# ── Dataloaders & optimizer ────────────────────────────────────────────────
 k_train_dataloader = DataLoader(semeval_k_train, shuffle=True, batch_size=4, collate_fn=data_collator)
 
 eval_dataloader = DataLoader(semeval["test"], batch_size=8, collate_fn=data_collator)
 
-optimizer = AdamW(model.parameters(), lr=5e-5)
+optimizer = AdamW(list(model.parameters()) + list(answer_words.parameters()), lr=5e-5)
 
 num_training_steps = num_epochs * len(k_train_dataloader)
 lr_scheduler = get_scheduler(
@@ -74,6 +126,7 @@ device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cp
 model.to(device)
 answer_words.to(device)
 
+# ── Training loop ──────────────────────────────────────────────────────────
 with tqdm(range(num_training_steps), desc="Training", position=1, leave=True) as progress_bar:
     for epoch in range(num_epochs):
         # ── Training ──────────────────────────────────────────────
