@@ -31,6 +31,7 @@ def compute_metrics(eval_preds):
     }
 
 
+
 # Load and preprocess the dataset
 semeval = load_and_process("SemEvalWorkshop/sem_eval_2010_task_8")
 semeval_k_train = generate_k_shot_examples(semeval["train"], 256)
@@ -61,8 +62,8 @@ with torch.no_grad():
     for i, label in enumerate(relation_labels):
         description = label_descriptions[label]
         tokens = tokenizer(description, return_tensors="pt")
-        token_embeddings = model.embeddings.word_embeddings(tokens.input_ids)
-        avg = token_embeddings.mean(dim=1).squeeze(0)
+        outputs = model(**tokens)
+        avg = outputs.last_hidden_state.mean(dim=1).squeeze(0)
         answer_words.weight.data[i] = avg
 
 #Verify initialization
