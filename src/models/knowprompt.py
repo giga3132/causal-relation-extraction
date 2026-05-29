@@ -1,4 +1,5 @@
-from transformers import DataCollatorWithPadding, RobertaTokenizer, RobertaModel, get_scheduler, Trainer, TrainingArguments
+import math
+from transformers import DataCollatorWithPadding, RobertaTokenizer, RobertaModel, get_scheduler, Trainer, TrainingArguments, set_seed
 from src.data.generate_k_shot import generate_k_shot_examples
 from src.data.data import load_and_process
 import torch
@@ -11,9 +12,19 @@ import numpy as np
 import evaluate
 import wandb
 import time
+import argparse
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--k", type=int, default=-1, help="k-shot size. Use -1 for full dataset.")
+parser.add_argument("--epochs", type=int, default=5)
+parser.add_argument("--lr", type=float, default=5e-5)
+parser.add_argument("--seed", type=int, default=42)
+args = parser.parse_args()
+
+set_seed(args.seed)
 
 num_labels = 3
-num_epochs = 5
+num_epochs = args.epochs
 
 def tokenize_function(examples):
     '''Tokenizes the input sentences with a prompt template.'''
@@ -31,10 +42,14 @@ def compute_metrics(eval_preds):
     }
 
 
-
 # Load and preprocess the dataset
 semeval = load_and_process("SemEvalWorkshop/sem_eval_2010_task_8")
-semeval_k_train = generate_k_shot_examples(semeval["train"], 256)
+
+if args.k != -1:
+    semeval_k_train = generate_k_shot_examples(semeval["train"], args.k)
+else:
+    semeval_k_train = semeval["train"]
+
 print(f"Number of training examples: {len(semeval_k_train)}")
 
 # Load metrics
@@ -113,52 +128,65 @@ k_train_dataloader = DataLoader(semeval_k_train, shuffle=True, batch_size=4, col
 
 eval_dataloader = DataLoader(semeval["test"], batch_size=8, collate_fn=data_collator)
 
-optimizer = AdamW(list(model.parameters()) + list(answer_words.parameters()), lr=5e-5)
+optimizer = AdamW(list(model.parameters()) + list(answer_words.parameters()), lr=args.lr if args.k != -1 else 2e-5)
 
-num_training_steps = num_epochs * len(k_train_dataloader)
+accumulation_steps = 4
+scaler = torch.amp.GradScaler('cuda') # For FP16 speedup
+
+updates_per_epoch = math.ceil(len(k_train_dataloader) / accumulation_steps)
+num_training_steps = num_epochs * updates_per_epoch
+
 lr_scheduler = get_scheduler(
         "linear",
         optimizer=optimizer,
         num_warmup_steps=0,
         num_training_steps=num_training_steps
 )
+print(f"Total training steps (with accumulation): {num_training_steps}")
 
 device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 model.to(device)
 answer_words.to(device)
 
+run_name = f"knowprompt-k{args.k}-s{args.seed}" if args.k != -1 else f"knowprompt-full-s{args.seed}"
+wandb.init(project="causal-re", name=run_name, config=args)
+
 # ── Training loop ──────────────────────────────────────────────────────────
 with tqdm(range(num_training_steps), desc="Training", position=1, leave=True) as progress_bar:
+    global_step = 0
     for epoch in range(num_epochs):
         # ── Training ──────────────────────────────────────────────
-
         model.train()
-        for batch in k_train_dataloader:
+        answer_words.train()
+        for i, batch in enumerate(k_train_dataloader):
             batch = {k: v.to(device) for k, v in batch.items()}
             
-             # batch["inputs_id"] is (batch_size, seq_length), take boolean array with positions of masks, and then take tensor with mask positions.
-            mask_pos = (batch["input_ids"] == tokenizer.mask_token_id).nonzero(as_tuple=True)[1]
-            
-            outputs = model(
-                input_ids=batch["input_ids"],
-                attention_mask=batch["attention_mask"]
-            )
-            # (batch_size, vocab_size)
-            mask_hidden = outputs.last_hidden_state[torch.arange(batch["input_ids"].size(0)), mask_pos]
+            with torch.amp.autocast('cuda'): # Mixed Precision
+                # batch["inputs_id"] is (batch_size, seq_length), take boolean array with positions of masks, and then take tensor with mask positions.
+                mask_pos = (batch["input_ids"] == tokenizer.mask_token_id).nonzero(as_tuple=True)[1]
+                outputs = model(input_ids=batch["input_ids"], attention_mask=batch["attention_mask"])
+                
+                # Extract mask hidden states
+                mask_hidden = outputs.last_hidden_state[torch.arange(batch["input_ids"].size(0)), mask_pos]
+                logits = torch.matmul(mask_hidden, answer_words.weight.T)
+                loss = nn.CrossEntropyLoss()(logits, batch["labels"])
+                loss = loss / accumulation_steps
 
-            logits = torch.matmul(mask_hidden, answer_words.weight.T)
-            
-            loss = nn.CrossEntropyLoss()(logits, batch["labels"])
-            loss.backward()
+            scaler.scale(loss).backward()
 
-            optimizer.step()
-            lr_scheduler.step()
-            optimizer.zero_grad()
-            progress_bar.update(1)
+            if (i + 1) % accumulation_steps == 0:
+                scaler.step(optimizer)
+                scaler.update()
+                lr_scheduler.step()
+                optimizer.zero_grad()
+                progress_bar.update(1)
+                global_step += 1
+                wandb.log({"train_loss": loss.item() * accumulation_steps, "iteration": global_step})
 
         # ── Evaluation ───────────────────────────────────
 
         model.eval()
+        answer_words.eval()
         all_logits, all_labels = [], []
         eval_loss = 0.0
         num_eval_steps = len(eval_dataloader)
@@ -210,31 +238,4 @@ with tqdm(range(num_training_steps), desc="Training", position=1, leave=True) as
         }
 
         tqdm.write(str(eval_metrics))
-
-
-
-# Initialize wandb for experiment tracking
-# wandb.init(project="transformer-fine-tuning", name="knowprompt-proto")
-
-
-# Training
-
-
-# training_args = TrainingArguments("outputs/roberta", 
-#                                   eval_strategy="epoch",
-#                                   logging_steps=20,
-#                                   num_train_epochs=5,
-#                                   per_device_train_batch_size=4,
-#                                   gradient_accumulation_steps=4,
-#                                   fp16=True,
-# )
-
-# trainer = Trainer(
-#     model=model,
-#     args=training_args,
-#     train_dataset=semeval_k_train,
-#     eval_dataset=semeval["test"],
-#     data_collator=data_collator,
-#     processing_class=tokenizer,
-#     compute_metrics=compute_metrics,
-# )
+        wandb.log({k: float(v) for k, v in eval_metrics.items() if k != "epoch"})

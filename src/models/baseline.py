@@ -3,6 +3,9 @@ from sklearn.naive_bayes import BernoulliNB, MultinomialNB
 from sklearn.metrics import classification_report, f1_score
 from sklearn.utils import compute_sample_weight
 from src.data.data import load_and_process
+from src.data.generate_k_shot import generate_k_shot_examples
+import argparse
+import numpy as np
 
 def parse_sentence(sentence):
     """Extract tokens and entity spans from SemEval formatted sentences."""
@@ -56,19 +59,32 @@ def collapse_label(l):
     return l // 2
 
 
+parser = argparse.ArgumentParser()
+parser.add_argument("--k", type=int, default=-1, help="k-shot size. Use -1 for full dataset.")
+parser.add_argument("--seed", type=int, default=42)
+args = parser.parse_args()
+np.random.seed(args.seed)
+
 semeval = load_and_process("SemEvalWorkshop/sem_eval_2010_task_8")
+
+if args.k != -1:
+    train_set = generate_k_shot_examples(semeval["train"], args.k)
+    print(f"Running baseline with k={args.k}")
+else:
+    train_set = semeval["train"]
+    print("Running baseline with full dataset")
 
 nb = MultinomialNB(alpha=1.0)
 dv = DictVectorizer(sparse=True)
 
-train_dicts = [extract_features(s) for s in semeval["train"]["sentence"]]
+train_dicts = [extract_features(s) for s in train_set["sentence"]]
 test_dicts  = [extract_features(s) for s in semeval["test"]["sentence"]]
 
 X_train_vec = dv.fit_transform(train_dicts)
 print(X_train_vec.shape)
 X_test_vec  = dv.transform(test_dicts)
 
-y_train = semeval["train"]["labels"]
+y_train = train_set["labels"]
 y_test  = semeval["test"]["labels"]
 
 # sample_weights = compute_sample_weight(class_weight='balanced', y=y_train)

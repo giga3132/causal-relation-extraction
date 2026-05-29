@@ -1,10 +1,19 @@
-from transformers import DataCollatorWithPadding, RobertaTokenizer, RobertaForSequenceClassification, Trainer, TrainingArguments
+from transformers import DataCollatorWithPadding, RobertaTokenizer, RobertaForSequenceClassification, Trainer, TrainingArguments, set_seed
 from src.data.generate_k_shot import generate_k_shot_examples
 from src.data.data import load_and_process
 import numpy as np
 import evaluate
 import wandb
+import argparse
 
+parser = argparse.ArgumentParser()
+parser.add_argument("--k", type=int, default=-1, help="k-shot size. Use -1 for full dataset.")
+parser.add_argument("--epochs", type=int, default=5)
+parser.add_argument("--lr", type=float, default=2e-5)
+parser.add_argument("--seed", type=int, default=42)
+args = parser.parse_args()
+
+set_seed(args.seed)
 
 def tokenize_function(examples):
     '''Tokenizes the input sentences.'''
@@ -23,7 +32,12 @@ def compute_metrics(eval_preds):
 
 # Load and preprocess the dataset
 semeval = load_and_process("SemEvalWorkshop/sem_eval_2010_task_8")
-semeval_k_train = generate_k_shot_examples(semeval["train"], 256)
+
+if args.k != -1:
+    semeval_k_train = generate_k_shot_examples(semeval["train"], args.k)
+else:
+    semeval_k_train = semeval["train"]
+
 print(f"Number of training examples: {len(semeval_k_train)}")
 
 # Load metrics
@@ -42,7 +56,8 @@ data_collator = DataCollatorWithPadding(tokenizer=tokenizer)
 
 
 # Initialize wandb for experiment tracking
-# wandb.init(project="transformer-fine-tuning", name="roberta-test")
+run_name = f"roberta-k{args.k}-s{args.seed}" if args.k != -1 else f"roberta-full-s{args.seed}"
+wandb.init(project="causal-re", name=run_name, config=args)
 
 
 # Training
@@ -50,11 +65,14 @@ data_collator = DataCollatorWithPadding(tokenizer=tokenizer)
 training_args = TrainingArguments("outputs/roberta", 
                                   eval_strategy="epoch",
                                   logging_steps=20,
-                                  num_train_epochs=5,
+                                  learning_rate=args.lr,
+                                  num_train_epochs=args.epochs,
                                   per_device_train_batch_size=4,
                                   gradient_accumulation_steps=4,
                                   fp16=True,
+                                  seed=args.seed,
                                 #   report_to="wandb"
+                                  report_to="wandb"
 )
 
 trainer = Trainer(
