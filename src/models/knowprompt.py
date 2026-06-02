@@ -104,10 +104,12 @@ def train_stage(stage_num, epochs, optimizer_params, use_struct_loss, lr, model,
     
     print(f"\n>>> Starting Stage {stage_num}: {epochs} epochs")
     
+    progress_bar = tqdm(total=epochs * len(train_dataloader), desc=f"Stage {stage_num}", position=0, leave=True)
     for epoch in range(epochs):
+        progress_bar.set_description(f"Stage {stage_num} | Epoch {epoch+1}/{epochs}")
         model.train() 
         answer_words.train()
-        for i, batch in enumerate(tqdm(train_dataloader, desc=f"Stage {stage_num} | Epoch {epoch+1}/{epochs}", position=0, leave=True)):
+        for i, batch in enumerate(train_dataloader):
             batch = {k: v.to(device) for k, v in batch.items()}
             with torch.amp.autocast('cuda'):
                 outputs = get_model_outputs(batch, model, virtual_type_embeddings, type_token_ids)
@@ -128,8 +130,10 @@ def train_stage(stage_num, epochs, optimizer_params, use_struct_loss, lr, model,
             if (i + 1) % accumulation_steps == 0 or (i + 1) == len(train_dataloader):
                 scaler.step(optimizer); scaler.update(); scheduler.step(); optimizer.zero_grad()
                 wandb.log({f"stage{stage_num}_loss": loss.item() * accumulation_steps})
+            progress_bar.update(1)
         
         evaluate_stage(epoch, stage_num, model, answer_words, virtual_type_embeddings, type_token_ids, eval_dataloader, device)
+    progress_bar.close()
 
 # ── Data and model loading ──────────────────────────────────────────────────
 
@@ -158,9 +162,9 @@ answer_words = nn.Embedding(num_labels, 768)
 
 relation_labels = ["Cause-Effect(e1,e2)", "Cause-Effect(e2,e1)", "Other"]
 label_descriptions = {
-    "Cause-Effect(e1,e2)": "cause produces effect result",
-    "Cause-Effect(e2,e1)": "caused by produced from source",
-    "Other": "unrelated different no relation"
+    "Cause-Effect(e1,e2)": "the first entity causes or produces the second entity",
+    "Cause-Effect(e2,e1)": "the second entity causes or produces the first entity",
+    "Other": "no causal or directional relation between the entities"
 }
 
 # Initialize answer_words embeddings
