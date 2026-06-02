@@ -1,4 +1,5 @@
 import math
+import re
 from transformers import DataCollatorWithPadding, RobertaTokenizer, RobertaModel, get_scheduler, Trainer, TrainingArguments, set_seed
 from src.data.generate_k_shot import generate_k_shot_examples
 from src.data.data import load_and_process
@@ -21,14 +22,31 @@ parser.add_argument("--lr", type=float, default=5e-5)
 parser.add_argument("--seed", type=int, default=42)
 args = parser.parse_args()
 
+# ── Config ──────────────────────────────────────────────────────────
+
 set_seed(args.seed)
 
 num_labels = 3
 num_epochs = args.epochs
 
+# ── Helper functions ────────────────────────────────────────────────
+
 def tokenize_function(examples):
-    '''Tokenizes the input sentences with a prompt template.'''
-    templated_sentences = [f"{s} The relation is {tokenizer.mask_token}." for s in examples["sentence"]]
+    templated_sentences = []
+    for s in examples["sentence"]:
+        # Extract entity text from inline markers
+        e1_match = re.search(r'<e1>(.*?)</e1>', s)
+        e2_match = re.search(r'<e2>(.*?)</e2>', s)
+        e1_text = e1_match.group(1).strip() if e1_match else ""
+        e2_text = e2_match.group(1).strip() if e2_match else ""
+
+        # Strip all markers to get clean sentence
+        clean = re.sub(r'</?e[12]>', '', s).strip()
+
+        # Rebuild in new format
+        templated = f"{clean} <V1> {e1_text} <V1> {tokenizer.mask_token} <V2> {e2_text} <V2>"
+        templated_sentences.append(templated)
+
     return tokenizer(templated_sentences, truncation=True, padding="max_length", max_length=128)
 
 def compute_metrics(eval_preds):
@@ -41,6 +59,79 @@ def compute_metrics(eval_preds):
         "f1": f1["f1"]
     }
 
+def transE_loss(V1_h, rel_h, V2_h, gamma=1.0):
+    """Computes the TransE structural constraint: ||s + r - o||"""
+    pos_score = torch.norm(V1_h + rel_h - V2_h, p=2, dim=-1)
+    # Negative: shuffle V2 within batch to create 'corrupted' triples
+    e2_neg = V2_h[torch.randperm(V2_h.size(0))]
+    neg_score = torch.norm(V1_h + rel_h - e2_neg, p=2, dim=-1)
+    return -F.logsigmoid(gamma - pos_score).mean() - F.logsigmoid(neg_score - gamma).mean()
+
+def get_model_outputs(batch, model, virtual_types, type_ids):
+    inputs_embeds = model.embeddings.word_embeddings(batch["input_ids"]).clone()
+    for i, tid in enumerate(type_ids):
+        mask = (batch["input_ids"] == tid).unsqueeze(-1).expand_as(inputs_embeds)
+        inputs_embeds = torch.where(mask, virtual_types[i].expand_as(inputs_embeds), inputs_embeds)
+    return model(inputs_embeds=inputs_embeds, attention_mask=batch["attention_mask"])
+
+def evaluate_stage(epoch, stage, model, answer_words, virtual_type_embeddings, type_token_ids, eval_dataloader, device):
+    """Standard evaluation loop."""
+    model.eval(); answer_words.eval()
+    all_logits, all_labels = [], []
+    eval_loss, eval_start = 0.0, time.time()
+    with torch.no_grad():
+        for batch in tqdm(eval_dataloader, desc=f"Evaluating Stage {stage}", position=1, leave=False):
+            batch = {k: v.to(device) for k, v in batch.items()}
+            outputs = get_model_outputs(batch, model, virtual_type_embeddings, type_token_ids)
+            mask_pos = (batch["input_ids"] == tokenizer.mask_token_id).nonzero(as_tuple=False)
+            mask_h = outputs.last_hidden_state[mask_pos[:, 0], mask_pos[:, 1]]
+            logits = torch.matmul(mask_h, answer_words.weight.T)
+            eval_loss += nn.CrossEntropyLoss()(logits, batch["labels"]).item()
+            all_logits.append(logits.cpu().numpy()); all_labels.append(batch["labels"].cpu().numpy())
+
+    metrics = compute_metrics((np.concatenate(all_logits), np.concatenate(all_labels)))
+    res = {"eval_loss": eval_loss/len(eval_dataloader), "eval_accuracy": metrics['accuracy'], "eval_f1": metrics['f1'], "stage": stage, "epoch": epoch+1}
+    print(res); wandb.log(res)
+
+def train_stage(stage_num, epochs, optimizer_params, use_struct_loss, lr, model, answer_words, virtual_type_embeddings, type_token_ids, train_dataloader, eval_dataloader, device):
+    """Generic training stage to support two-phase optimization."""
+    optimizer = AdamW(optimizer_params, lr=lr)
+    accumulation_steps = 4
+    num_training_steps = epochs * math.ceil(len(train_dataloader) / accumulation_steps)
+    num_warmup_steps = int(0.1 * num_training_steps)
+    scheduler = get_scheduler("linear", optimizer=optimizer, num_warmup_steps=num_warmup_steps, num_training_steps=num_training_steps)
+    scaler = torch.amp.GradScaler('cuda')
+    
+    print(f"\n>>> Starting Stage {stage_num}: {epochs} epochs")
+    
+    for epoch in range(epochs):
+        model.train() 
+        answer_words.train()
+        for i, batch in enumerate(tqdm(train_dataloader, desc=f"Stage {stage_num} | Epoch {epoch+1}/{epochs}", position=0, leave=True)):
+            batch = {k: v.to(device) for k, v in batch.items()}
+            with torch.amp.autocast('cuda'):
+                outputs = get_model_outputs(batch, model, virtual_type_embeddings, type_token_ids)
+                mask_pos = (batch["input_ids"] == tokenizer.mask_token_id).nonzero(as_tuple=False)
+                mask_h = outputs.last_hidden_state[mask_pos[:, 0], mask_pos[:, 1]]
+                logits = torch.matmul(mask_h, answer_words.weight.T)
+                
+                loss = nn.CrossEntropyLoss()(logits, batch["labels"])
+                if use_struct_loss:
+                    V1_pos = (batch["input_ids"] == V1_id).nonzero(as_tuple=False)
+                    V2_pos = (batch["input_ids"] == V2_id).nonzero(as_tuple=False)
+                    V1_h = outputs.last_hidden_state[V1_pos[::2, 0], V1_pos[::2, 1]]
+                    V2_h = outputs.last_hidden_state[V2_pos[::2, 0], V2_pos[::2, 1]]
+                    loss += 0.001 * transE_loss(V1_h, mask_h, V2_h) #Gamma of 0.001 from paper.
+                
+                loss = loss / accumulation_steps
+            scaler.scale(loss).backward()
+            if (i + 1) % accumulation_steps == 0 or (i + 1) == len(train_dataloader):
+                scaler.step(optimizer); scaler.update(); scheduler.step(); optimizer.zero_grad()
+                wandb.log({f"stage{stage_num}_loss": loss.item() * accumulation_steps})
+        
+        evaluate_stage(epoch, stage_num, model, answer_words, virtual_type_embeddings, type_token_ids, eval_dataloader, device)
+
+# ── Data and model loading ──────────────────────────────────────────────────
 
 # Load and preprocess the dataset
 semeval = load_and_process("SemEvalWorkshop/sem_eval_2010_task_8")
@@ -59,7 +150,7 @@ f1_metric = evaluate.load("f1")
 tokenizer = RobertaTokenizer.from_pretrained("roberta-base")
 model = RobertaModel.from_pretrained("roberta-base")
 
-tokenizer.add_special_tokens({"additional_special_tokens": ["<e1>", "</e1>", "<e2>", "</e2>"]})
+tokenizer.add_special_tokens({"additional_special_tokens": ["<V1>", "<V2>"]})
 model.resize_token_embeddings(len(tokenizer))
 
 # ── Verbalizer ──────────────────────────────────────────
@@ -67,9 +158,9 @@ answer_words = nn.Embedding(num_labels, 768)
 
 relation_labels = ["Cause-Effect(e1,e2)", "Cause-Effect(e2,e1)", "Other"]
 label_descriptions = {
-    "Cause-Effect(e1,e2)": "the first entity causes or produces the second entity",
-    "Cause-Effect(e2,e1)": "the second entity causes or produces the first entity",
-    "Other": "no causal or directional relation between the entities"
+    "Cause-Effect(e1,e2)": "cause produces effect result",
+    "Cause-Effect(e2,e1)": "caused by produced from source",
+    "Other": "unrelated different no relation"
 }
 
 # Initialize answer_words embeddings
@@ -91,10 +182,8 @@ print(F.cosine_similarity(v0.unsqueeze(0), v2.unsqueeze(0)))
 
 # ── Virtual type words ──────────────────────────────────────────
 type_descriptions = {
-    "<e1>":   ["start", "first", "entity"],
-    "</e1>":  ["end", "first", "entity"],
-    "<e2>":   ["start", "second", "entity"],
-    "</e2>":  ["end", "second", "entity"],
+    "<V1>":   ["Cause", "Effect"],
+    "<V2>":  ["Cause", "Effect"],
 }
 
 with torch.no_grad():
@@ -105,17 +194,24 @@ with torch.no_grad():
             word_ids.extend(tokenizer.encode(word, add_special_tokens=False))
         
         avg = model.embeddings.word_embeddings.weight.data[word_ids].mean(dim=0)
-        model.embeddings.word_embeddings.weight.data[marker_id] = avg
+        noise = torch.randn_like(avg) * 0.01
+        model.embeddings.word_embeddings.weight.data[marker_id] = avg + noise
+
+# Isolate virtual type words as standalone parameters
+type_tokens = ["<V1>", "<V2>"]
+type_token_ids = [tokenizer.convert_tokens_to_ids(t) for t in type_tokens]
+virtual_type_embeddings = nn.Parameter(model.embeddings.word_embeddings.weight.data[type_token_ids].clone())
 
 # Verify initialization
-e1_id = tokenizer.convert_tokens_to_ids("<e1>")
+V1_id = tokenizer.convert_tokens_to_ids("<V1>")
+V2_id = tokenizer.convert_tokens_to_ids("<V2>")
 entity_id = tokenizer.encode("entity", add_special_tokens=False)[0]
-e1_emb = model.embeddings.word_embeddings.weight.data[e1_id]
+V1_emb = model.embeddings.word_embeddings.weight.data[V1_id]
 entity_emb = model.embeddings.word_embeddings.weight.data[entity_id]
-print(f"Similarity <e1> to 'entity': {F.cosine_similarity(e1_emb.unsqueeze(0), entity_emb.unsqueeze(0)).item():.4f}")
+print(f"Similarity V1 to 'entity': {F.cosine_similarity(V1_emb.unsqueeze(0), entity_emb.unsqueeze(0)).item():.4f}")
 
 # ── Tokenize datasets ───────────────────────────────────────────────────────
-semeval = semeval.map(tokenize_function, batched=True,remove_columns="sentence")
+semeval = semeval.map(tokenize_function, batched=True, remove_columns="sentence")
 semeval_k_train = semeval_k_train.map(tokenize_function, batched = True, remove_columns="sentence")
 
 semeval.set_format("torch")
@@ -128,114 +224,49 @@ k_train_dataloader = DataLoader(semeval_k_train, shuffle=True, batch_size=4, col
 
 eval_dataloader = DataLoader(semeval["test"], batch_size=8, collate_fn=data_collator)
 
-optimizer = AdamW(list(model.parameters()) + list(answer_words.parameters()), lr=args.lr if args.k != -1 else 2e-5)
-
-accumulation_steps = 4
-scaler = torch.amp.GradScaler('cuda') # For FP16 speedup
-
-updates_per_epoch = math.ceil(len(k_train_dataloader) / accumulation_steps)
-num_training_steps = num_epochs * updates_per_epoch
-
-lr_scheduler = get_scheduler(
-        "linear",
-        optimizer=optimizer,
-        num_warmup_steps=0,
-        num_training_steps=num_training_steps
-)
-print(f"Total training steps (with accumulation): {num_training_steps}")
-
 device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 model.to(device)
 answer_words.to(device)
+virtual_type_embeddings = nn.Parameter(virtual_type_embeddings.data.to(device))
 
 run_name = f"knowprompt-k{args.k}-s{args.seed}" if args.k != -1 else f"knowprompt-full-s{args.seed}"
 wandb.init(project="causal-re", name=run_name, config=args)
 
-# ── Training loop ──────────────────────────────────────────────────────────
-with tqdm(range(num_training_steps), desc="Training", position=1, leave=True) as progress_bar:
-    global_step = 0
-    for epoch in range(num_epochs):
-        # ── Training ──────────────────────────────────────────────
-        model.train()
-        answer_words.train()
-        for i, batch in enumerate(k_train_dataloader):
-            batch = {k: v.to(device) for k, v in batch.items()}
-            
-            with torch.amp.autocast('cuda'): # Mixed Precision
-                # batch["inputs_id"] is (batch_size, seq_length), take boolean array with positions of masks, and then take tensor with mask positions.
-                mask_pos = (batch["input_ids"] == tokenizer.mask_token_id).nonzero(as_tuple=True)[1]
-                outputs = model(input_ids=batch["input_ids"], attention_mask=batch["attention_mask"])
-                
-                # Extract mask hidden states
-                mask_hidden = outputs.last_hidden_state[torch.arange(batch["input_ids"].size(0)), mask_pos]
-                logits = torch.matmul(mask_hidden, answer_words.weight.T)
-                loss = nn.CrossEntropyLoss()(logits, batch["labels"])
-                loss = loss / accumulation_steps
+# ── Execution ───────────────────────────────────────────────────────────────
 
-            scaler.scale(loss).backward()
-
-            if (i + 1) % accumulation_steps == 0:
-                scaler.step(optimizer)
-                scaler.update()
-                lr_scheduler.step()
-                optimizer.zero_grad()
-                progress_bar.update(1)
-                global_step += 1
-                wandb.log({"train_loss": loss.item() * accumulation_steps, "iteration": global_step})
-
-        # ── Evaluation ───────────────────────────────────
-
-        model.eval()
-        answer_words.eval()
-        all_logits, all_labels = [], []
-        eval_loss = 0.0
-        num_eval_steps = len(eval_dataloader)
-        num_eval_samples = len(semeval["test"])
-
-        eval_bar = tqdm(eval_dataloader, 
-                        desc=f"Evaluating epoch {epoch + 1}", 
-                        position=0, 
-                        leave=False)
-
-        eval_start = time.time()
-
-        with torch.no_grad():
-            for batch in eval_bar:
-                batch = {k: v.to(device) for k, v in batch.items()}
-                
-                mask_pos = (batch["input_ids"] == tokenizer.mask_token_id).nonzero(as_tuple=True)[1]
-                
-                outputs = model(
-                    input_ids=batch["input_ids"],
-                    attention_mask=batch["attention_mask"]
-                )
-                # (batch_size, vocab_size)
-                mask_hidden = outputs.last_hidden_state[torch.arange(batch["input_ids"].size(0)), mask_pos]
-
-                logits = torch.matmul(mask_hidden, answer_words.weight.T)
-                
-                loss = nn.CrossEntropyLoss()(logits, batch["labels"])
-
-                eval_loss += loss.item()
-                all_logits.append(logits.cpu().numpy())
-                all_labels.append(batch["labels"].cpu().numpy())
-
-        eval_runtime = time.time() - eval_start
-
-        all_logits = np.concatenate(all_logits, axis=0)
-        all_labels = np.concatenate(all_labels, axis=0)
-
-        metrics = compute_metrics((all_logits, all_labels))
-
-        eval_metrics = {
-            "eval_loss":                 f"{eval_loss / num_eval_steps:.4f}",
-            "eval_accuracy":             f"{metrics['accuracy']:.4f}",
-            "eval_f1":                   f"{metrics['f1']:.4f}",
-            "eval_runtime":              f"{eval_runtime:.3f}",
-            "eval_samples_per_second":   f"{num_eval_samples / eval_runtime:.2f}",
-            "eval_steps_per_second":     f"{num_eval_steps / eval_runtime:.2f}",
-            "epoch":                     f"{epoch + 1}",
-        }
-
-        tqdm.write(str(eval_metrics))
-        wandb.log({k: float(v) for k, v in eval_metrics.items() if k != "epoch"})
+# Stage 1: Anchor the Virtual words using Structural Loss
+for param in model.parameters(): param.requires_grad_(False)
+train_stage(
+    stage_num=1, 
+    epochs=2, 
+    optimizer_params=[{"params": answer_words.parameters()}, {"params": [virtual_type_embeddings]}], 
+    use_struct_loss=True, 
+    lr=1e-4,
+    model=model,
+    answer_words=answer_words,
+    virtual_type_embeddings=virtual_type_embeddings,
+    type_token_ids=type_token_ids,
+    train_dataloader=k_train_dataloader,
+    eval_dataloader=eval_dataloader,
+    device=device
+)
+# Stage 2: Fine-tune the Full model
+for param in model.parameters(): param.requires_grad_(True)
+train_stage(
+    stage_num=2, 
+    epochs=3, 
+    optimizer_params=[
+        {"params": model.parameters()},
+        {"params": answer_words.parameters()},
+        {"params": [virtual_type_embeddings]}
+    ], 
+    use_struct_loss=False, 
+    lr=2e-5,
+    model=model,
+    answer_words=answer_words,
+    virtual_type_embeddings=virtual_type_embeddings,
+    type_token_ids=type_token_ids,
+    train_dataloader=k_train_dataloader,
+    eval_dataloader=eval_dataloader,
+    device=device
+)
