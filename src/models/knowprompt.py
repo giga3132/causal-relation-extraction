@@ -149,7 +149,7 @@ model.to(device)
 answer_words.to(device)
 
 run_name = f"knowprompt-k{args.k}-s{args.seed}" if args.k != -1 else f"knowprompt-full-s{args.seed}"
-wandb.init(project="causal-re", name=run_name, config=args)
+wandb.init(project="causal-re-f", name=run_name, config=args)
 
 # ── Training loop ──────────────────────────────────────────────────────────
 with tqdm(range(num_training_steps), desc="Training", position=1, leave=True) as progress_bar:

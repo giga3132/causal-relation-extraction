@@ -57,7 +57,7 @@ data_collator = DataCollatorWithPadding(tokenizer=tokenizer)
 
 # Initialize wandb for experiment tracking
 run_name = f"roberta-k{args.k}-s{args.seed}" if args.k != -1 else f"roberta-full-s{args.seed}"
-wandb.init(project="causal-re", name=run_name, config=args)
+wandb.init(project="causal-re-f", name=run_name, config=args)
 
 
 # Training
