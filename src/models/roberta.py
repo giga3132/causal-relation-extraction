@@ -7,6 +7,7 @@ import wandb
 import argparse
 
 parser = argparse.ArgumentParser()
+parser.add_argument("--dataset", type=str, default="semeval", help="Dataset to use: semeval or clean.")
 parser.add_argument("--k", type=int, default=-1, help="k-shot size. Use -1 for full dataset.")
 parser.add_argument("--epochs", type=int, default=5)
 parser.add_argument("--lr", type=float, default=2e-5)
@@ -31,14 +32,15 @@ def compute_metrics(eval_preds):
 
 
 # Load and preprocess the dataset
-semeval = load_and_process("SemEvalWorkshop/sem_eval_2010_task_8")
+dataset = load_and_process(args.dataset)
 
 if args.k != -1:
-    semeval_k_train = generate_k_shot_examples(semeval["train"], args.k)
+    train_dataset = generate_k_shot_examples(dataset["train"], args.k)
 else:
-    semeval_k_train = semeval["train"]
+    train_dataset = dataset["train"]
 
-print(f"Number of training examples: {len(semeval_k_train)}")
+print(f"Dataset: {args.dataset}")
+print(f"Number of training examples: {len(train_dataset)}")
 
 # Load metrics
 accuracy_metric = evaluate.load("accuracy")
@@ -50,19 +52,19 @@ model = RobertaForSequenceClassification.from_pretrained("roberta-base", num_lab
 tokenizer.add_special_tokens({"additional_special_tokens": ["<e1>", "</e1>", "<e2>", "</e2>"]})
 model.resize_token_embeddings(len(tokenizer))
 
-semeval = semeval.map(tokenize_function, batched=True,)
-semeval_k_train = semeval_k_train.map(tokenize_function, batched=True,)
+dataset = dataset.map(tokenize_function, batched=True,)
+train_dataset = train_dataset.map(tokenize_function, batched=True,)
 data_collator = DataCollatorWithPadding(tokenizer=tokenizer)
 
 
 # Initialize wandb for experiment tracking
-run_name = f"roberta-k{args.k}-s{args.seed}" if args.k != -1 else f"roberta-full-s{args.seed}"
-wandb.init(project="causal-re-f", name=run_name, config=args)
+run_name = f"roberta-{args.dataset}-k{args.k}-s{args.seed}" if args.k != -1 else f"roberta-{args.dataset}-full-s{args.seed}"
+wandb.init(project="causal-re-final", name=run_name, config=args)
 
 
 # Training
 
-training_args = TrainingArguments("outputs/roberta", 
+training_args = TrainingArguments(f"outputs/roberta-{args.dataset}", 
                                   eval_strategy="epoch",
                                   logging_steps=20,
                                   learning_rate=args.lr,
@@ -78,8 +80,8 @@ training_args = TrainingArguments("outputs/roberta",
 trainer = Trainer(
     model=model,
     args=training_args,
-    train_dataset=semeval_k_train,
-    eval_dataset=semeval["test"],
+    train_dataset=train_dataset,
+    eval_dataset=dataset["test"],
     data_collator=data_collator,
     processing_class=tokenizer,
     compute_metrics=compute_metrics,

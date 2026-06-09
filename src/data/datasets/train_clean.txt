@@ -135,7 +135,7 @@
 135	"<e1>Since last Thursday mass anti-terror parades involving thousands of heavily armed troops have been staged in three of Xinjiang ’ s most important cities</e1> following <e2>two deadly attacks in which more than a dozen people were slain</e2> ."	Cause-Effect(e2,e1).
 136	"The <e1>protests were joined by a large number of university students</e1> who <e2>stormed a civic square near the government headquarters</e2> ."	Other.
 137	"<e1>The number of persons injured during the clashes could not be ascertained</e1> as <e2>most of them had gone into hiding</e2> ."	Cause-Effect(e2,e1).
-138	"He said , " I  <e1>very strongly condemn<e1>the violent <e2>attack on Congress leaders</e2> and workers in Chhattisgarh today ."	Other.
+138	"He said , " I  <e1>very strongly condemn</e1>the violent <e2>attack on Congress leaders</e2> and workers in Chhattisgarh today ."	Other.
 139	"<e1>Raising slogans</e1> <e2>against the State Government ’ s ban on toddy tapping</e2> , which was later upheld by the Supreme Court , some protestors drank toddy and certified that it was only a health drink with insignificant alcohol content and not an alcoholic beverage like the brew being sold in the IMFL outlets of the State Government ."	Cause-Effect(e2,e1).
 140	"” Meanwhile , <e1>more than 5,000 oil tanker lorries plying inside Chennai city have planned to support the strike</e1> and <e2>will stay off the roads from Thursday</e2> ."	Cause-Effect(e1,e2).
 141	"<e1>Implats</e1> has been blamed for <e2>the strike</e2> by National Union of Mineworkers ( NUM ) general secretary Frans Baleni ."	Cause-Effect(e1,e2).
@@ -147,7 +147,7 @@
 147	"<e1>The trouble started</e1> with <e2>the shifting of the Palode sub-registrar office from a rented building in Perungamala panchayat , where it had been functioning for several years , to a newly built government-owned building about 100 metres away , in Nandiyodu panchayat</e2> ."	Cause-Effect(e2,e1).
 148	"<e1>He is undergoing a jail term</e1> for <e2>killing Communist Party of India-Marxist ( CPI-M ) legislator Ajit Sarkar in 1998</e2> ."	Cause-Effect(e2,e1).
 149	"<e1>Twelve students arrested</e1> for <e2>public violence while protesting against financial aid cuts at the University of the Witwatersrand</e2> appeared in the Johannesburg Regional Court on Tuesday ."	Cause-Effect(e2,e1).
-150	"The IFP also <e1>unveiled its election</e1> bus at the rally , at which </e2>party leader Mangosuthu Buthelezi</e2> was expected to speak later ."	Other.
+150	"The IFP also <e1>unveiled its election</e1> bus at the rally , at which <e2>party leader Mangosuthu Buthelezi</e2> was expected to speak later ."	Other.
 151	"Till <e1>the filing of this report</e1> , <e2>all protesters were squatting outside Vikas Bhawan</e2> and said would call off their stir only after getting formal orders regarding regularisation of all retrenched staffers ."	Cause-Effect(e1,e2).
 152	"Abhishek Banerjee , nephew of the chief minister had said : " The Mamata Banerjee government , by <e1>killing him</e1> , has proved that in days to come , people will have the final word . " Communist Party of India-Maoist leader Koteswar Rao alias Kishenji <e2>was killed on November 24</e2> , 2011 in a gun battle in West Midnapore district near the Bengal-Jharkhand border ."	Other.
 153	"Although <e1>the people who have organised these events try to blame the government for what has happened</e1> , <e2>a clear and strong message about such radical and irrational activities must be sent across society , not for the sake of our tourism or economy , but in defence of Hong Kong 's core values</e2> ."	Cause-Effect(e1,e2).
@@ -223,7 +223,7 @@
 223	"<e1>Tension in Nagari</e1> After <e2>TDP Men Attack Roja</e2>"	Cause-Effect(e2,e1).
 224	"<e1>The ANC in KwaZulu-Natal strongly condemns the misbehaviour of IFP members</e1> <e2>who interrupted our campaign trail led by ANC Deputy President Jacob Zuma at Dokodweni and Mandeni on the north coast today</e2> ."	Cause-Effect(e2,e1).
 225	"Followers anguished by the treatment 06th June 2011 10:33 PM CHENNAI : <e1>Chennai followers of Baba Ramdev , who participated in fasting on Saturday in support of the yoga guru , are anguished</e1> at <e2>the treatment meted out to him and the turn of events at the Ramlila Maidan in New Delhi</e2> ."	Cause-Effect(e2,e1).
-226	"</e1>Local welders <e1> have been contacted and more than a thousand mobile numbers around the vicinity ofthe explosion <e2>are being screened , sources added</e2> ."	Other.
+226	"<e1>Local welders </e1> have been contacted and more than a thousand mobile numbers around the vicinity ofthe explosion <e2>are being screened , sources added</e2> ."	Other.
 227	"RFEA chief executive Nico Badenhorst said <e1>the strike</e1> was <e2>costing the country R100 million a day</e2> ."	Cause-Effect(e1,e2).
 228	"Posted : Wed Dec 06 2000 IST SRINAGAR , DEC 5 : <e1>Paramilitary troops and a two-person militant suicide squad fought a 22 - hour gunbattle at a Kashmir security camp which ended on Tuesday</e1> with <e2>eight dead and nine wounded</e2> , police said ."	Cause-Effect(e1,e2).
 229	"( PICS AVAILABLE ON www.sapapics.co.za ) <e1>A crowd of supporters erupted</e1> as <e2>Jacob Zuma walked on to a stage outside the Pietermaritzburg High Court on Thursday to address them</e2> ."	Cause-Effect(e2,e1).
@@ -620,7 +620,7 @@
 620	"<e1>Students and teachers of physical education relaunched their protest</e1> <e2>against the appointment of general teachers for physical education work in schools</e2> ."	Cause-Effect(e2,e1).
 621	"Lam – who has kept out of the public eye since her climbdown and has record low approval ratings – struck a conciliatory note Monday at the ceremony marking the handover , saying <e1>a series of protests that have rocked her city</e1> <e2>have taught her that she needs to listen better to the youth and people in general</e2> ."	Cause-Effect(e1,e2).
 622	"<e1>Only a sub-inspector and four policemen were present at the spot</e1> as <e2>the bulk of the police force was deployed in the city centre</e2> in view of a protest march at the High Court junction against the police action on activists of the Students Federation of India at Kozhikode ."	Cause-Effect(e2,e1).
-623	"The Banerjee Committee , <e1>appointed by Railway Minister Lalu Prasad</e1> , said the <e2>fire was  purely accidental<e2> ."	Other.
+623	"The Banerjee Committee , <e1>appointed by Railway Minister Lalu Prasad</e1> , said the <e2>fire was  purely accidental</e2> ."	Other.
 624	"Inspector General of BSF Jammu Frontier Rajeev Krishna had said that <e1>its personnel opened fire in self-defence with " maximum restraint "</e1> <e2>to quell the violence by the mob which tried to storm their storehouse of arms and ammunition</e2> ."	Cause-Effect(e2,e1).
 625	"Taxi protest march shuts down Rustenburg Molaole Montsho RUSTENBURG , September 12 ( ANA ) - <e1>Commuters were left stranded and businesses closed on Thursday</e1> as <e2>the taxi industry embarked on a protest march</e2> against gender based violence ."	Cause-Effect(e2,e1).
 626	"That ’ s the message , ” said Kam Tsang , a veteran <e1>protester who held aloft a banner</e1> that urged “ Fight for Universal Suffrage. ” Man-kei Tam , Amnesty International ’ s Hong Kong director , said : “ Today ’ s appalling jail sentences … are an affront to justice and the human rights to peaceful <e2>protest and freedom of expression</e2> ."	Other.
@@ -1234,7 +1234,7 @@
 1234	"Gorur Villagers Block City-Mangaluru 30th November 2014 06:24 AM BENGALURU : <e1>Thousands of villagers from Gorur on Saturday staged a protest in front of the Solur police station and blocked the busy Bengaluru-Mangaluru National Highway</e1> <e2>condemning the police caning on Friday</e2> ."	Cause-Effect(e2,e1).
 1235	"Contentious issue <e1>The Greater Hyderabad Cab and Bus Operators Association went on strike</e1> <e2>demanding exemption from payment of Value Added Tax ( VAT ) with retrospective effect from 2003</e2> ."	Cause-Effect(e2,e1).
 1236	"The statement condemned authorities for turning “ a deaf ear to peaceful <e1>protests from a wide section society</e1> ” and <e2>threatened more actions</e2> ."	Other.
-1237	"And  <e1> the students  <e1> seem to be in no mood to skip them citing the agitation as they <e2>have realised that they are crucial to complete the course</e2> ."	Other.
+1237	"And  <e1> the students  </e1> seem to be in no mood to skip them citing the agitation as they <e2>have realised that they are crucial to complete the course</e2> ."	Other.
 1238	"<e1>Passengers to the Shamshabad airport did not have much of a problem</e1> as <e2>some radio cab operators did not participate in the strike and they made brisk business</e2> ."	Cause-Effect(e2,e1).
 1239	"About 50 relatives of Rajagopalan put up a <e1>shed and began a hunger strike at around 9 am at the</e1> spot where Rajagopalan <e2>was hacked</e2> ."	Other.
 1240	"<e1>﻿Police arrested leaders of various political parties</e1> <e2>who squatted on the highway</e2> in response to ' Sadak Bandh ' called by Telangana Joint Action Committee ( JAC ) to urge the central government to immediately carve out a Telangana state ."	Cause-Effect(e2,e1).
@@ -1690,7 +1690,7 @@
 1690	"<e1>A group of protesters pelted the police with stones</e1> , after <e2>the police dispersed them from blocking the road linking Brits and Letlhabile</e2> ."	Cause-Effect(e2,e1).
 1691	"The police , however , suspect that <e1>old enmity</e1> might have been the reason behind <e2>the murder</e2> ."	Cause-Effect(e1,e2).
 1692	"TAMIL NADU Post blasts , the web of security tightens May 29 , 2014 00:00 IST <e1>Railway stations , places of worship , cinema halls , malls – the enhanced protective measures are everywhere</e1> <e2>The May Day twin blasts on platform nine of Chennai Central sent a strong message to various enforcement agencies in the city</e2> ."	Cause-Effect(e2,e1).
-1693	"If <e1>it does not act</e1> , <e2>the protests will continue</e2> . ""	Cause-Effect(e1,e2).
+1693	"If <e1>it does not act</e1> , <e2>the protests will continue</e2> ."	Cause-Effect(e1,e2).
 1694	"Congress Workers Stage ' Rail Roko ' in Maharashtra Against Train Fare Hike 25th June 2014 12:36 PM MUMBAI : <e1>Congress workers today staged a ' rail roko ' in various parts of Maharashtra , excluding Mumbai</e1> , <e2>to protest the train fare hike</e2> ."	Cause-Effect(e2,e1).
 1695	"Some members of the groups even <e1>hurled crude bombs</e1> but none <e2>was injured</e2> ."	Other.
 1696	"<e1>Fearing they would not get the forms</e1> , <e2>the mob turned violent and pelted stones at SDA property and vehicles parked outside</e2> ."	Cause-Effect(e1,e2).
@@ -1888,7 +1888,7 @@
 1888	"<e1>The mortal remains of the brave soldier will be taken by air to Jind tomorrow</e1> as <e2>the road traffic is disrupted due to violent protests by Jats who are demanding quota in OBC category</e2> ."	Cause-Effect(e2,e1).
 1889	"June 23 , 2009 : <e1>A group of motorcycle-borne armed Maoists open fire on Lakhisarai district court premises in Bihar</e1> <e2>to free four of their men</e2> ."	Cause-Effect(e2,e1).
 1890	"<e1>The stone pelting</e1> resulted in <e2>injuries to about 12 security personnel</e2> , he said ."	Cause-Effect(e1,e2).
-1891	"Meanwhile , <e1>the banned</e1> Communist Party of India-Maoist 's Jamui-Bhagalpur zone commander Chiragda denied the outfit 's involvement in the abduction</e1>  and <e2>alleged that local criminals were involved </e2>."	Other.
+1891	"Meanwhile , <e1>the banned Communist Party of India-Maoist 's Jamui-Bhagalpur zone commander Chiragda denied the outfit 's involvement in the abduction</e1>  and <e2>alleged that local criminals were involved </e2>."	Other.
 1892	"Mony had , while addressing a <e1>rally at Thodupuzha in the district on Saturday</e1> , said that killings <e2>were nothing new to the CPI(M)</e2> as the party had finished off around 13 Congress workers in the early 1980 s ."	Other.
 1893	"<e1>The incident</e1> <e2>occurred about 125 km from here</e2> ."	Other.
 1894	"It claimed that during <e1>the attack</e1> <e2>a five-vehicle convoy of 6th Dogra Regiment was " assaulted " at Tengnoupal-New Somtal Road in Chandel district of Manipur</e2> ."	Cause-Effect(e1,e2).
@@ -1972,7 +1972,7 @@
 1972	"Played active part in wage deal : Vijay Mallya - Indian Express Agencies , Agencies : Greater Noida , Sat Oct 27 2012 , 13:37 hrs Kingfisher Airlines Chairman Vijay Mallya today said he was never out of reach of his <e1>striking employees during the 26 - day impasse over non-payment of salaries</e1> since <e2>March this year</e2> and had played an active part in the wage settlement ."	Other.
 1973	"With <e1>no options left</e1> , <e2>the top brass decided to suspend the “ errant ” constable and informed Advocates ’ Association president K N Subba Reddy</e2> , who was in a meeting with advocates to discuss their course of action ."	Cause-Effect(e1,e2).
 1974	"`` There was <e1>an event</e1> <e2>to inaugurate the SRC ( Student Representative Council ) this morning</e2> , students disrupted the event , '' said campus spokesman Koos Degenaar ."	Cause-Effect(e2,e1).
-1975	"February 10 , 2009 00:00 IST Mohamed Nazeer LDF government <e1>has failed to deliver</e1> , says Chandy HOSANGADI ( KASARAGOD ): The ‘ Kerala Raksha March ’( Save Kerala March ) </e2> led by Kerala Pradesh Congress Committee president </e2>  Ramesh Chennithala was flagged off here on Monday ."	Other.
+1975	"February 10 , 2009 00:00 IST Mohamed Nazeer LDF government <e1>has failed to deliver</e1> , says Chandy HOSANGADI ( KASARAGOD ): <e2>The ‘ Kerala Raksha March ’( Save Kerala March )</e2> led by Kerala Pradesh Congress Committee president Ramesh Chennithala was flagged off here on Monday ."	Other.
 1976	"<e1>Seven people - four militants and three security personnel - were killed</e1> in <e2>the first two days of the battle</e2> ."	Cause-Effect(e2,e1).
 1977	"<e1>About 200 people , majority of them leaders and workers of the Congress party , were arrested</e1> in connection with <e2>114 cases of attacks on Reliance outlets</e2> ."	Cause-Effect(e2,e1).
 1978	"Aney , whose comments on separate Vidarbha <e1>had sparked a controversy</e1> , had said the flag of separate Vidarbha <e2>was being raised on May 1 from the last three years</e2> ."	Other.

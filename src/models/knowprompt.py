@@ -15,9 +15,13 @@ import time
 import argparse
 
 parser = argparse.ArgumentParser()
+parser.add_argument("--dataset", type=str, default="semeval", help="Dataset to use: semeval or clean.")
 parser.add_argument("--k", type=int, default=-1, help="k-shot size. Use -1 for full dataset.")
 parser.add_argument("--epochs", type=int, default=5)
-parser.add_argument("--lr", type=float, default=5e-5)
+parser.add_argument("--lr", type=float, default=None, help="Fallback learning rate used for both parameter groups.")
+parser.add_argument("--lr1", type=float, default=None, help="Learning rate for prompt/verbalizer answer words.")
+parser.add_argument("--lr2", type=float, default=None, help="Learning rate for the base RoBERTa parameters.")
+parser.add_argument("--max_length", type=int, default=None)
 parser.add_argument("--seed", type=int, default=42)
 args = parser.parse_args()
 
@@ -25,11 +29,16 @@ set_seed(args.seed)
 
 num_labels = 3
 num_epochs = args.epochs
+clean_dataset_names = {"clean", "local", "causal_clean"}
+max_length = args.max_length if args.max_length is not None else (256 if args.dataset in clean_dataset_names else 128)
+fallback_lr = args.lr if args.lr is not None else (5e-5 if args.k != -1 else 2e-5)
+lr1 = args.lr1 if args.lr1 is not None else fallback_lr
+lr2 = args.lr2 if args.lr2 is not None else fallback_lr
 
 def tokenize_function(examples):
     '''Tokenizes the input sentences with a prompt template.'''
     templated_sentences = [f"{s} The relation is {tokenizer.mask_token}." for s in examples["sentence"]]
-    return tokenizer(templated_sentences, truncation=True, padding="max_length", max_length=128)
+    return tokenizer(templated_sentences, truncation=True, padding="max_length", max_length=max_length)
 
 def compute_metrics(eval_preds):
     logits, labels = eval_preds
@@ -43,14 +52,17 @@ def compute_metrics(eval_preds):
 
 
 # Load and preprocess the dataset
-semeval = load_and_process("SemEvalWorkshop/sem_eval_2010_task_8")
+dataset = load_and_process(args.dataset)
 
 if args.k != -1:
-    semeval_k_train = generate_k_shot_examples(semeval["train"], args.k)
+    train_dataset = generate_k_shot_examples(dataset["train"], args.k)
 else:
-    semeval_k_train = semeval["train"]
+    train_dataset = dataset["train"]
 
-print(f"Number of training examples: {len(semeval_k_train)}")
+print(f"Dataset: {args.dataset}")
+print(f"Number of training examples: {len(train_dataset)}")
+print(f"Max sequence length: {max_length}")
+print(f"Learning rates: lr1={lr1}, lr2={lr2}")
 
 # Load metrics
 accuracy_metric = evaluate.load("accuracy")
@@ -115,20 +127,25 @@ entity_emb = model.embeddings.word_embeddings.weight.data[entity_id]
 print(f"Similarity <e1> to 'entity': {F.cosine_similarity(e1_emb.unsqueeze(0), entity_emb.unsqueeze(0)).item():.4f}")
 
 # ── Tokenize datasets ───────────────────────────────────────────────────────
-semeval = semeval.map(tokenize_function, batched=True,remove_columns="sentence")
-semeval_k_train = semeval_k_train.map(tokenize_function, batched = True, remove_columns="sentence")
+dataset = dataset.map(tokenize_function, batched=True,remove_columns="sentence")
+train_dataset = train_dataset.map(tokenize_function, batched = True, remove_columns="sentence")
 
-semeval.set_format("torch")
-semeval_k_train.set_format("torch")
+dataset.set_format("torch")
+train_dataset.set_format("torch")
 
 data_collator = DataCollatorWithPadding(tokenizer=tokenizer)
 
 # ── Dataloaders & optimizer ────────────────────────────────────────────────
-k_train_dataloader = DataLoader(semeval_k_train, shuffle=True, batch_size=4, collate_fn=data_collator)
+k_train_dataloader = DataLoader(train_dataset, shuffle=True, batch_size=4, collate_fn=data_collator)
 
-eval_dataloader = DataLoader(semeval["test"], batch_size=8, collate_fn=data_collator)
+eval_dataloader = DataLoader(dataset["test"], batch_size=8, collate_fn=data_collator)
 
-optimizer = AdamW(list(model.parameters()) + list(answer_words.parameters()), lr=args.lr if args.k != -1 else 2e-5)
+optimizer = AdamW(
+    [
+        {"params": answer_words.parameters(), "lr": lr1},
+        {"params": model.parameters(), "lr": lr2},
+    ]
+)
 
 accumulation_steps = 4
 scaler = torch.amp.GradScaler('cuda') # For FP16 speedup
@@ -148,8 +165,10 @@ device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cp
 model.to(device)
 answer_words.to(device)
 
-run_name = f"knowprompt-k{args.k}-s{args.seed}" if args.k != -1 else f"knowprompt-full-s{args.seed}"
-wandb.init(project="causal-re-f", name=run_name, config=args)
+run_name = f"knowprompt-{args.dataset}-k{args.k}-s{args.seed}" if args.k != -1 else f"knowprompt-{args.dataset}-full-s{args.seed}"
+wandb_config = vars(args).copy()
+wandb_config.update({"effective_lr1": lr1, "effective_lr2": lr2, "effective_max_length": max_length})
+wandb.init(project="causal-re-final", name=run_name, config=wandb_config)
 
 # ── Training loop ──────────────────────────────────────────────────────────
 with tqdm(range(num_training_steps), desc="Training", position=1, leave=True) as progress_bar:
@@ -182,6 +201,7 @@ with tqdm(range(num_training_steps), desc="Training", position=1, leave=True) as
                 progress_bar.update(1)
                 global_step += 1
                 wandb.log({"train_loss": loss.item() * accumulation_steps, "iteration": global_step})
+        
 
         # ── Evaluation ───────────────────────────────────
 
@@ -190,7 +210,7 @@ with tqdm(range(num_training_steps), desc="Training", position=1, leave=True) as
         all_logits, all_labels = [], []
         eval_loss = 0.0
         num_eval_steps = len(eval_dataloader)
-        num_eval_samples = len(semeval["test"])
+        num_eval_samples = len(dataset["test"])
 
         eval_bar = tqdm(eval_dataloader, 
                         desc=f"Evaluating epoch {epoch + 1}", 
