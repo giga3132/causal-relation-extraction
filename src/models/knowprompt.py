@@ -2,6 +2,7 @@ import math
 from transformers import DataCollatorWithPadding, RobertaTokenizer, RobertaModel, get_scheduler, Trainer, TrainingArguments, set_seed
 from src.data.generate_k_shot import generate_k_shot_examples
 from src.data.data import load_and_process
+from src.data.span_splits import split_by_entity_span_length
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -23,6 +24,8 @@ parser.add_argument("--lr1", type=float, default=None, help="Learning rate for p
 parser.add_argument("--lr2", type=float, default=None, help="Learning rate for the base RoBERTa parameters.")
 parser.add_argument("--max_length", type=int, default=None)
 parser.add_argument("--seed", type=int, default=42)
+parser.add_argument("--span_split_eval", action="store_true", help="Evaluate clean test examples separately by entity span length.")
+parser.add_argument("--span_split_threshold", type=float, default=None, help="Short/long threshold over max entity span length. Defaults to the test median.")
 args = parser.parse_args()
 
 set_seed(args.seed)
@@ -63,6 +66,19 @@ print(f"Dataset: {args.dataset}")
 print(f"Number of training examples: {len(train_dataset)}")
 print(f"Max sequence length: {max_length}")
 print(f"Learning rates: lr1={lr1}, lr2={lr2}")
+
+span_eval_datasets = {}
+span_threshold = None
+span_counts = None
+if args.span_split_eval:
+    span_eval_datasets, span_threshold, span_counts = split_by_entity_span_length(
+        dataset["test"],
+        threshold=args.span_split_threshold,
+    )
+    print(
+        f"Span split threshold: max entity span <= {span_threshold} is short; "
+        f"short={span_counts['short']}, long={span_counts['long']}"
+    )
 
 # Load metrics
 accuracy_metric = evaluate.load("accuracy")
@@ -129,9 +145,15 @@ print(f"Similarity <e1> to 'entity': {F.cosine_similarity(e1_emb.unsqueeze(0), e
 # ── Tokenize datasets ───────────────────────────────────────────────────────
 dataset = dataset.map(tokenize_function, batched=True,remove_columns="sentence")
 train_dataset = train_dataset.map(tokenize_function, batched = True, remove_columns="sentence")
+span_eval_datasets = {
+    name: split.map(tokenize_function, batched=True, remove_columns="sentence")
+    for name, split in span_eval_datasets.items()
+}
 
 dataset.set_format("torch")
 train_dataset.set_format("torch")
+for split in span_eval_datasets.values():
+    split.set_format("torch")
 
 data_collator = DataCollatorWithPadding(tokenizer=tokenizer)
 
@@ -139,6 +161,10 @@ data_collator = DataCollatorWithPadding(tokenizer=tokenizer)
 k_train_dataloader = DataLoader(train_dataset, shuffle=True, batch_size=4, collate_fn=data_collator)
 
 eval_dataloader = DataLoader(dataset["test"], batch_size=8, collate_fn=data_collator)
+span_eval_dataloaders = {
+    name: DataLoader(split, batch_size=8, collate_fn=data_collator)
+    for name, split in span_eval_datasets.items()
+}
 
 optimizer = AdamW(
     [
@@ -167,8 +193,74 @@ answer_words.to(device)
 
 run_name = f"knowprompt-{args.dataset}-k{args.k}-s{args.seed}" if args.k != -1 else f"knowprompt-{args.dataset}-full-s{args.seed}"
 wandb_config = vars(args).copy()
-wandb_config.update({"effective_lr1": lr1, "effective_lr2": lr2, "effective_max_length": max_length})
-wandb.init(project="causal-re-final", name=run_name, config=wandb_config)
+wandb_config.update({
+    "effective_lr1": lr1,
+    "effective_lr2": lr2,
+    "effective_max_length": max_length,
+    "span_split_threshold": span_threshold,
+    "span_split_short_n": span_counts["short"] if span_counts else None,
+    "span_split_long_n": span_counts["long"] if span_counts else None,
+})
+wandb.init(project="causal-re-final-split", name=run_name, config=wandb_config)
+
+def evaluate_model(eval_dataloader, num_eval_samples, desc, metric_prefix, epoch):
+    model.eval()
+    answer_words.eval()
+    all_logits, all_labels = [], []
+    eval_loss = 0.0
+    num_eval_steps = len(eval_dataloader)
+
+    eval_bar = tqdm(
+        eval_dataloader,
+        desc=desc,
+        position=0,
+        leave=False,
+    )
+
+    eval_start = time.time()
+
+    with torch.no_grad():
+        for batch in eval_bar:
+            batch = {k: v.to(device) for k, v in batch.items()}
+
+            mask_pos = (batch["input_ids"] == tokenizer.mask_token_id).nonzero(as_tuple=True)[1]
+
+            outputs = model(
+                input_ids=batch["input_ids"],
+                attention_mask=batch["attention_mask"]
+            )
+            mask_hidden = outputs.last_hidden_state[torch.arange(batch["input_ids"].size(0)), mask_pos]
+
+            logits = torch.matmul(mask_hidden, answer_words.weight.T)
+            loss = nn.CrossEntropyLoss()(logits, batch["labels"])
+
+            eval_loss += loss.item()
+            all_logits.append(logits.cpu().numpy())
+            all_labels.append(batch["labels"].cpu().numpy())
+
+    eval_runtime = time.time() - eval_start
+
+    all_logits = np.concatenate(all_logits, axis=0)
+    all_labels = np.concatenate(all_labels, axis=0)
+
+    metrics = compute_metrics((all_logits, all_labels))
+
+    eval_metrics = {
+        f"{metric_prefix}_loss": eval_loss / num_eval_steps,
+        f"{metric_prefix}_accuracy": metrics["accuracy"],
+        f"{metric_prefix}_f1": metrics["f1"],
+        f"{metric_prefix}_runtime": eval_runtime,
+        f"{metric_prefix}_samples_per_second": num_eval_samples / eval_runtime,
+        f"{metric_prefix}_steps_per_second": num_eval_steps / eval_runtime,
+        "epoch": epoch + 1,
+    }
+
+    printable_metrics = {
+        key: f"{value:.4f}" if isinstance(value, float) else value
+        for key, value in eval_metrics.items()
+    }
+    tqdm.write(str(printable_metrics))
+    return eval_metrics
 
 # ── Training loop ──────────────────────────────────────────────────────────
 with tqdm(range(num_training_steps), desc="Training", position=1, leave=True) as progress_bar:
@@ -202,60 +294,23 @@ with tqdm(range(num_training_steps), desc="Training", position=1, leave=True) as
                 global_step += 1
                 wandb.log({"train_loss": loss.item() * accumulation_steps, "iteration": global_step})
         
-
         # ── Evaluation ───────────────────────────────────
 
-        model.eval()
-        answer_words.eval()
-        all_logits, all_labels = [], []
-        eval_loss = 0.0
-        num_eval_steps = len(eval_dataloader)
-        num_eval_samples = len(dataset["test"])
+        eval_metrics = evaluate_model(
+            eval_dataloader,
+            len(dataset["test"]),
+            f"Evaluating epoch {epoch + 1}",
+            "eval",
+            epoch,
+        )
+        wandb.log(eval_metrics)
 
-        eval_bar = tqdm(eval_dataloader, 
-                        desc=f"Evaluating epoch {epoch + 1}", 
-                        position=0, 
-                        leave=False)
-
-        eval_start = time.time()
-
-        with torch.no_grad():
-            for batch in eval_bar:
-                batch = {k: v.to(device) for k, v in batch.items()}
-                
-                mask_pos = (batch["input_ids"] == tokenizer.mask_token_id).nonzero(as_tuple=True)[1]
-                
-                outputs = model(
-                    input_ids=batch["input_ids"],
-                    attention_mask=batch["attention_mask"]
-                )
-                # (batch_size, vocab_size)
-                mask_hidden = outputs.last_hidden_state[torch.arange(batch["input_ids"].size(0)), mask_pos]
-
-                logits = torch.matmul(mask_hidden, answer_words.weight.T)
-                
-                loss = nn.CrossEntropyLoss()(logits, batch["labels"])
-
-                eval_loss += loss.item()
-                all_logits.append(logits.cpu().numpy())
-                all_labels.append(batch["labels"].cpu().numpy())
-
-        eval_runtime = time.time() - eval_start
-
-        all_logits = np.concatenate(all_logits, axis=0)
-        all_labels = np.concatenate(all_labels, axis=0)
-
-        metrics = compute_metrics((all_logits, all_labels))
-
-        eval_metrics = {
-            "eval_loss":                 f"{eval_loss / num_eval_steps:.4f}",
-            "eval_accuracy":             f"{metrics['accuracy']:.4f}",
-            "eval_f1":                   f"{metrics['f1']:.4f}",
-            "eval_runtime":              f"{eval_runtime:.3f}",
-            "eval_samples_per_second":   f"{num_eval_samples / eval_runtime:.2f}",
-            "eval_steps_per_second":     f"{num_eval_steps / eval_runtime:.2f}",
-            "epoch":                     f"{epoch + 1}",
-        }
-
-        tqdm.write(str(eval_metrics))
-        wandb.log({k: float(v) for k, v in eval_metrics.items() if k != "epoch"})
+        for split_name, span_eval_dataloader in span_eval_dataloaders.items():
+            span_metrics = evaluate_model(
+                span_eval_dataloader,
+                len(span_eval_datasets[split_name]),
+                f"Evaluating {split_name} spans epoch {epoch + 1}",
+                f"eval_{split_name}_span",
+                epoch,
+            )
+            wandb.log(span_metrics)

@@ -97,7 +97,7 @@ y_pred = nb.predict(X_test_vec)
 print(classification_report(y_test, y_pred))
 
 run_name = f"baseline-{args.dataset}-k{args.k}-s{args.seed}" if args.k != -1 else f"baseline-{args.dataset}-full-s{args.seed}"
-wandb.init(project="causal-re-final", name=run_name, config=args)
+wandb.init(project="causal-re-final-split", name=run_name, config=args)
 
 labels = [l for l in nb.classes_ if l != 2]
 macro_f1 = f1_score(y_test, y_pred, average="macro", labels=labels) #Macro F1 without "Other" class

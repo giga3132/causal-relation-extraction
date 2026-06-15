@@ -5,8 +5,18 @@ from collections import Counter
 
 
 METRIC_KEYS = {
-    "accuracy": ["eval_accuracy", "eval/accuracy", "accuracy"],
-    "f1": ["eval_f1", "eval/f1", "f1"],
+    "test": {
+        "accuracy": ["eval_accuracy", "eval/accuracy", "accuracy"],
+        "f1": ["eval_f1", "eval/f1", "f1"],
+    },
+    "short_span": {
+        "accuracy": ["eval_short_span_accuracy", "eval_short_span/accuracy", "eval/short_span_accuracy"],
+        "f1": ["eval_short_span_f1", "eval_short_span/f1", "eval/short_span_f1"],
+    },
+    "long_span": {
+        "accuracy": ["eval_long_span_accuracy", "eval_long_span/accuracy", "eval/long_span_accuracy"],
+        "f1": ["eval_long_span_f1", "eval_long_span/f1", "eval/long_span_f1"],
+    },
 }
 
 
@@ -57,9 +67,9 @@ def parse_run_name(run_name):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--projects", type=str, nargs='+', default=["causal-re-f-b"], help="List of W&B projects to fetch results from.")
+    parser.add_argument("--projects", type=str, nargs='+', default=["causal-re-final-split"], help="List of W&B projects to fetch results from.")
     parser.add_argument("--entity", type=str, required=True) #wandb username
-    parser.add_argument("--output", type=str, default="aggregated_results.csv")
+    parser.add_argument("--output", type=str, default="aggregated_results_split.csv")
     parser.add_argument("--finished-only", action="store_true", help="Only aggregate runs whose W&B state is finished.")
     args = parser.parse_args()
 
@@ -95,30 +105,38 @@ def main():
             if seed is None:
                 seed = parsed_name["seed"]
             
-            acc = first_present(summary, METRIC_KEYS["accuracy"])
-            f1 = first_present(summary, METRIC_KEYS["f1"])
+            rows_for_run = []
+            for eval_subset, metric_keys in METRIC_KEYS.items():
+                acc = first_present(summary, metric_keys["accuracy"])
+                f1 = first_present(summary, metric_keys["f1"])
 
-            if acc is None or f1 is None:
+                if acc is None or f1 is None:
+                    continue
+
+                rows_for_run.append({
+                    "project": project_name,
+                    "run_name": run.name,
+                    "state": run.state,
+                    "model": model,
+                    "dataset": dataset,
+                    "k": k,
+                    "seed": seed,
+                    "eval_subset": eval_subset,
+                    "accuracy": float(acc),
+                    "f1": float(f1)
+                })
+
+            if not rows_for_run:
                 skipped_metrics += 1
                 continue
 
-            data.append({
-                "project": project_name,
-                "run_name": run.name,
-                "state": run.state,
-                "model": model,
-                "dataset": dataset,
-                "k": k,
-                "seed": seed,
-                "accuracy": float(acc),
-                "f1": float(f1)
-            })
+            data.extend(rows_for_run)
 
     print(f"Fetched {total_runs} runs")
     print(f"Run states: {dict(states)}")
     print(f"Skipped by state: {skipped_state}")
     print(f"Skipped without accuracy/f1 metrics: {skipped_metrics}")
-    print(f"Runs included: {len(data)}")
+    print(f"Metric rows included: {len(data)}")
 
     df = pd.DataFrame(data)
     if df.empty:
@@ -126,13 +144,13 @@ def main():
         return
 
     # Group by all experimental settings (excluding seed) and aggregate
-    stats = df.groupby(["model", "dataset", "k"], dropna=False).agg({
+    stats = df.groupby(["model", "dataset", "k", "eval_subset"], dropna=False).agg({
         "accuracy": ["mean", "std"],
         "f1": ["mean", "std"]
     }).reset_index()
 
     # Sort by model, dataset, and k for a cleaner report
-    stats = stats.sort_values(["model", "dataset", "k"])
+    stats = stats.sort_values(["model", "dataset", "k", "eval_subset"])
 
     # Flatten the multi-index columns for readability (e.g., accuracy_mean)
     stats.columns = ['_'.join(col).strip('_') for col in stats.columns.values]

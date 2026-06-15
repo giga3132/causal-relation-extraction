@@ -5,6 +5,8 @@ import argparse
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--dataset", type=str, default="semeval", help="Dataset to use: semeval or clean.")
+parser.add_argument("--span_split_eval", action="store_true", help="Evaluate RoBERTa/KnowPrompt on short vs long entity-span test subsets.")
+parser.add_argument("--span_split_threshold", type=float, default=None, help="Short/long threshold over max entity span length.")
 
 k_values = [8, 16, 32, 64, 128, 256, -1]
 seeds = [42, 43, 44, 45, 46]
@@ -46,6 +48,20 @@ def learning_rate_args(model_path, k):
     return []
 
 
+def span_split_args(model_path, args):
+    if not args.span_split_eval or model_path.endswith("baseline.py"):
+        return []
+
+    command_args = ["--span_split_eval"]
+    if args.span_split_threshold is not None:
+        command_args.extend(["--span_split_threshold", str(args.span_split_threshold)])
+    return command_args
+
+
+def should_skip_experiment(model_path, k):
+    return model_path.endswith("baseline.py") and k != -1
+
+
 def main():
     args = parser.parse_args()
 
@@ -57,6 +73,10 @@ def main():
     for seed in seeds:
         for k in k_values:
             for model_path in models:
+                if should_skip_experiment(model_path, k):
+                    print(f"\n>>> Skipping Experiment: {model_path} | dataset={args.dataset} | k={k} | seed={seed}")
+                    continue
+
                 print(f"\n>>> Starting Experiment: {model_path} | dataset={args.dataset} | k={k} | seed={seed}")
                 command = [
                     sys.executable,
@@ -68,6 +88,7 @@ def main():
                     "--seed",
                     str(seed),
                     *learning_rate_args(model_path, k),
+                    *span_split_args(model_path, args),
                 ]
                 # Using subprocess to ensure a clean memory state for each run
                 subprocess.run(

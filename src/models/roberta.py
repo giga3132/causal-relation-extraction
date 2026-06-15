@@ -1,6 +1,7 @@
 from transformers import DataCollatorWithPadding, RobertaTokenizer, RobertaForSequenceClassification, Trainer, TrainingArguments, set_seed
 from src.data.generate_k_shot import generate_k_shot_examples
 from src.data.data import load_and_process
+from src.data.span_splits import split_by_entity_span_length
 import numpy as np
 import evaluate
 import wandb
@@ -12,6 +13,8 @@ parser.add_argument("--k", type=int, default=-1, help="k-shot size. Use -1 for f
 parser.add_argument("--epochs", type=int, default=5)
 parser.add_argument("--lr", type=float, default=2e-5)
 parser.add_argument("--seed", type=int, default=42)
+parser.add_argument("--span_split_eval", action="store_true", help="Evaluate clean test examples separately by entity span length.")
+parser.add_argument("--span_split_threshold", type=float, default=None, help="Short/long threshold over max entity span length. Defaults to the test median.")
 args = parser.parse_args()
 
 set_seed(args.seed)
@@ -42,6 +45,19 @@ else:
 print(f"Dataset: {args.dataset}")
 print(f"Number of training examples: {len(train_dataset)}")
 
+span_eval_datasets = {}
+span_threshold = None
+span_counts = None
+if args.span_split_eval:
+    span_eval_datasets, span_threshold, span_counts = split_by_entity_span_length(
+        dataset["test"],
+        threshold=args.span_split_threshold,
+    )
+    print(
+        f"Span split threshold: max entity span <= {span_threshold} is short; "
+        f"short={span_counts['short']}, long={span_counts['long']}"
+    )
+
 # Load metrics
 accuracy_metric = evaluate.load("accuracy")
 f1_metric = evaluate.load("f1")
@@ -54,12 +70,16 @@ model.resize_token_embeddings(len(tokenizer))
 
 dataset = dataset.map(tokenize_function, batched=True,)
 train_dataset = train_dataset.map(tokenize_function, batched=True,)
+span_eval_datasets = {
+    name: split.map(tokenize_function, batched=True)
+    for name, split in span_eval_datasets.items()
+}
 data_collator = DataCollatorWithPadding(tokenizer=tokenizer)
 
 
 # Initialize wandb for experiment tracking
 run_name = f"roberta-{args.dataset}-k{args.k}-s{args.seed}" if args.k != -1 else f"roberta-{args.dataset}-full-s{args.seed}"
-wandb.init(project="causal-re-final", name=run_name, config=args)
+wandb.init(project="causal-re-final-split", name=run_name, config=args)
 
 
 # Training
@@ -89,3 +109,16 @@ trainer = Trainer(
 
 
 trainer.train()
+
+if args.span_split_eval:
+    wandb.log({
+        "span_split_threshold": span_threshold,
+        "span_split_short_n": span_counts["short"],
+        "span_split_long_n": span_counts["long"],
+    })
+    for split_name, eval_dataset in span_eval_datasets.items():
+        metrics = trainer.evaluate(
+            eval_dataset=eval_dataset,
+            metric_key_prefix=f"eval_{split_name}_span",
+        )
+        print(f"{split_name.title()} span evaluation: {metrics}")
