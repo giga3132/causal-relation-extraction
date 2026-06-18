@@ -2,19 +2,23 @@ from transformers import DataCollatorWithPadding, RobertaTokenizer, RobertaForSe
 from src.data.generate_k_shot import generate_k_shot_examples
 from src.data.data import load_and_process
 from src.data.span_splits import split_by_entity_span_length
+from src.utils.experiment_logging import append_result, init_wandb, wandb_finish, wandb_log
 import numpy as np
 import evaluate
-import wandb
 import argparse
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--dataset", type=str, default="semeval", help="Dataset to use: semeval or clean.")
+parser.add_argument("--dataset", type=str, default="semeval", help="Dataset to use: semeval or causalnews.")
 parser.add_argument("--k", type=int, default=-1, help="k-shot size. Use -1 for full dataset.")
 parser.add_argument("--epochs", type=int, default=5)
 parser.add_argument("--lr", type=float, default=2e-5)
 parser.add_argument("--seed", type=int, default=42)
-parser.add_argument("--span_split_eval", action="store_true", help="Evaluate clean test examples separately by entity span length.")
+parser.add_argument("--span_split_eval", action="store_true", help="Evaluate CausalNews test examples separately by entity span length.")
 parser.add_argument("--span_split_threshold", type=float, default=None, help="Short/long threshold over max entity span length. Defaults to the test median.")
+parser.add_argument("--results_file", type=str, default="results/local_results.csv")
+parser.add_argument("--experiment_name", type=str, default="manual")
+parser.add_argument("--no_wandb", action="store_true")
+parser.add_argument("--use_wandb", action="store_true")
 args = parser.parse_args()
 
 set_seed(args.seed)
@@ -79,7 +83,7 @@ data_collator = DataCollatorWithPadding(tokenizer=tokenizer)
 
 # Initialize wandb for experiment tracking
 run_name = f"roberta-{args.dataset}-k{args.k}-s{args.seed}" if args.k != -1 else f"roberta-{args.dataset}-full-s{args.seed}"
-wandb.init(project="causal-re-final-split", name=run_name, config=args)
+wandb_run = init_wandb("causal-re-final-split", run_name, vars(args), enabled=args.use_wandb and not args.no_wandb)
 
 
 # Training
@@ -93,8 +97,7 @@ training_args = TrainingArguments(f"outputs/roberta-{args.dataset}",
                                   gradient_accumulation_steps=4,
                                   fp16=True,
                                   seed=args.seed,
-                                #   report_to="wandb"
-                                  report_to="wandb"
+                                  report_to="none"
 )
 
 trainer = Trainer(
@@ -110,8 +113,33 @@ trainer = Trainer(
 
 trainer.train()
 
+test_metrics = trainer.evaluate(eval_dataset=dataset["test"], metric_key_prefix="eval")
+print(f"Final test evaluation: {test_metrics}")
+wandb_log(wandb_run, test_metrics)
+append_result(
+    args.results_file,
+    {
+        "experiment": args.experiment_name,
+        "model": "roberta",
+        "dataset": args.dataset,
+        "k": args.k,
+        "seed": args.seed,
+        "eval_subset": "test",
+        "accuracy": test_metrics.get("eval_accuracy"),
+        "f1": test_metrics.get("eval_f1"),
+        "loss": test_metrics.get("eval_loss"),
+        "epoch": args.epochs,
+        "train_examples": len(train_dataset),
+        "test_examples": len(dataset["test"]),
+        "lr": args.lr,
+        "span_split_threshold": span_threshold,
+        "span_split_short_n": span_counts["short"] if span_counts else "",
+        "span_split_long_n": span_counts["long"] if span_counts else "",
+    },
+)
+
 if args.span_split_eval:
-    wandb.log({
+    wandb_log(wandb_run, {
         "span_split_threshold": span_threshold,
         "span_split_short_n": span_counts["short"],
         "span_split_long_n": span_counts["long"],
@@ -122,3 +150,27 @@ if args.span_split_eval:
             metric_key_prefix=f"eval_{split_name}_span",
         )
         print(f"{split_name.title()} span evaluation: {metrics}")
+        wandb_log(wandb_run, metrics)
+        append_result(
+            args.results_file,
+            {
+                "experiment": args.experiment_name,
+                "model": "roberta",
+                "dataset": args.dataset,
+                "k": args.k,
+                "seed": args.seed,
+                "eval_subset": f"{split_name}_span",
+                "accuracy": metrics.get(f"eval_{split_name}_span_accuracy"),
+                "f1": metrics.get(f"eval_{split_name}_span_f1"),
+                "loss": metrics.get(f"eval_{split_name}_span_loss"),
+                "epoch": args.epochs,
+                "train_examples": len(train_dataset),
+                "test_examples": len(eval_dataset),
+                "lr": args.lr,
+                "span_split_threshold": span_threshold,
+                "span_split_short_n": span_counts["short"],
+                "span_split_long_n": span_counts["long"],
+            },
+        )
+
+wandb_finish(wandb_run)

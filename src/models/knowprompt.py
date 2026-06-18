@@ -3,6 +3,7 @@ from transformers import DataCollatorWithPadding, RobertaTokenizer, RobertaModel
 from src.data.generate_k_shot import generate_k_shot_examples
 from src.data.data import load_and_process
 from src.data.span_splits import split_by_entity_span_length
+from src.utils.experiment_logging import append_result, init_wandb, wandb_finish, wandb_log
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -11,12 +12,11 @@ from torch.optim import AdamW
 from tqdm.auto import tqdm
 import numpy as np
 import evaluate
-import wandb
 import time
 import argparse
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--dataset", type=str, default="semeval", help="Dataset to use: semeval or clean.")
+parser.add_argument("--dataset", type=str, default="semeval", help="Dataset to use: semeval or causalnews.")
 parser.add_argument("--k", type=int, default=-1, help="k-shot size. Use -1 for full dataset.")
 parser.add_argument("--epochs", type=int, default=5)
 parser.add_argument("--lr", type=float, default=None, help="Fallback learning rate used for both parameter groups.")
@@ -24,15 +24,19 @@ parser.add_argument("--lr1", type=float, default=None, help="Learning rate for p
 parser.add_argument("--lr2", type=float, default=None, help="Learning rate for the base RoBERTa parameters.")
 parser.add_argument("--max_length", type=int, default=None)
 parser.add_argument("--seed", type=int, default=42)
-parser.add_argument("--span_split_eval", action="store_true", help="Evaluate clean test examples separately by entity span length.")
+parser.add_argument("--span_split_eval", action="store_true", help="Evaluate CausalNews test examples separately by entity span length.")
 parser.add_argument("--span_split_threshold", type=float, default=None, help="Short/long threshold over max entity span length. Defaults to the test median.")
+parser.add_argument("--results_file", type=str, default="results/local_results.csv")
+parser.add_argument("--experiment_name", type=str, default="manual")
+parser.add_argument("--no_wandb", action="store_true")
+parser.add_argument("--use_wandb", action="store_true")
 args = parser.parse_args()
 
 set_seed(args.seed)
 
 num_labels = 3
 num_epochs = args.epochs
-clean_dataset_names = {"clean", "local", "causal_clean"}
+clean_dataset_names = {"clean", "causalnews", "causal_clean"}
 max_length = args.max_length if args.max_length is not None else (256 if args.dataset in clean_dataset_names else 128)
 fallback_lr = args.lr if args.lr is not None else (5e-5 if args.k != -1 else 2e-5)
 lr1 = args.lr1 if args.lr1 is not None else fallback_lr
@@ -201,7 +205,7 @@ wandb_config.update({
     "span_split_short_n": span_counts["short"] if span_counts else None,
     "span_split_long_n": span_counts["long"] if span_counts else None,
 })
-wandb.init(project="causal-re-final-split", name=run_name, config=wandb_config)
+wandb_run = init_wandb("causal-re-final-split", run_name, wandb_config, enabled=args.use_wandb and not args.no_wandb)
 
 def evaluate_model(eval_dataloader, num_eval_samples, desc, metric_prefix, epoch):
     model.eval()
@@ -292,7 +296,7 @@ with tqdm(range(num_training_steps), desc="Training", position=1, leave=True) as
                 optimizer.zero_grad()
                 progress_bar.update(1)
                 global_step += 1
-                wandb.log({"train_loss": loss.item() * accumulation_steps, "iteration": global_step})
+                wandb_log(wandb_run, {"train_loss": loss.item() * accumulation_steps, "iteration": global_step})
         
         # ── Evaluation ───────────────────────────────────
 
@@ -303,7 +307,32 @@ with tqdm(range(num_training_steps), desc="Training", position=1, leave=True) as
             "eval",
             epoch,
         )
-        wandb.log(eval_metrics)
+        wandb_log(wandb_run, eval_metrics)
+        if epoch == num_epochs - 1:
+            append_result(
+                args.results_file,
+                {
+                    "experiment": args.experiment_name,
+                    "model": "knowprompt",
+                    "dataset": args.dataset,
+                    "k": args.k,
+                    "seed": args.seed,
+                    "eval_subset": "test",
+                    "accuracy": eval_metrics["eval_accuracy"],
+                    "f1": eval_metrics["eval_f1"],
+                    "loss": eval_metrics["eval_loss"],
+                    "epoch": epoch + 1,
+                    "train_examples": len(train_dataset),
+                    "test_examples": len(dataset["test"]),
+                    "lr": args.lr if args.lr is not None else "",
+                    "lr1": lr1,
+                    "lr2": lr2,
+                    "max_length": max_length,
+                    "span_split_threshold": span_threshold,
+                    "span_split_short_n": span_counts["short"] if span_counts else "",
+                    "span_split_long_n": span_counts["long"] if span_counts else "",
+                },
+            )
 
         for split_name, span_eval_dataloader in span_eval_dataloaders.items():
             span_metrics = evaluate_model(
@@ -313,4 +342,31 @@ with tqdm(range(num_training_steps), desc="Training", position=1, leave=True) as
                 f"eval_{split_name}_span",
                 epoch,
             )
-            wandb.log(span_metrics)
+            wandb_log(wandb_run, span_metrics)
+            if epoch == num_epochs - 1:
+                append_result(
+                    args.results_file,
+                    {
+                        "experiment": args.experiment_name,
+                        "model": "knowprompt",
+                        "dataset": args.dataset,
+                        "k": args.k,
+                        "seed": args.seed,
+                        "eval_subset": f"{split_name}_span",
+                        "accuracy": span_metrics[f"eval_{split_name}_span_accuracy"],
+                        "f1": span_metrics[f"eval_{split_name}_span_f1"],
+                        "loss": span_metrics[f"eval_{split_name}_span_loss"],
+                        "epoch": epoch + 1,
+                        "train_examples": len(train_dataset),
+                        "test_examples": len(span_eval_datasets[split_name]),
+                        "lr": args.lr if args.lr is not None else "",
+                        "lr1": lr1,
+                        "lr2": lr2,
+                        "max_length": max_length,
+                        "span_split_threshold": span_threshold,
+                        "span_split_short_n": span_counts["short"],
+                        "span_split_long_n": span_counts["long"],
+                    },
+                )
+
+wandb_finish(wandb_run)

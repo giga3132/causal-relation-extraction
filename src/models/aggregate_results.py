@@ -1,4 +1,3 @@
-import wandb
 import pandas as pd
 import argparse
 from collections import Counter
@@ -65,13 +64,57 @@ def parse_run_name(run_name):
 
     return parsed
 
+
+def aggregate_and_write(df, output):
+    if df.empty:
+        print("No results found.")
+        return
+
+    group_cols = ["model", "dataset", "k", "eval_subset"]
+    if "experiment" in df.columns:
+        group_cols = ["experiment", *group_cols]
+
+    df["accuracy"] = pd.to_numeric(df["accuracy"], errors="coerce")
+    df["f1"] = pd.to_numeric(df["f1"], errors="coerce")
+    stats = df.groupby(group_cols, dropna=False).agg({
+        "accuracy": ["mean", "std"],
+        "f1": ["mean", "std"]
+    }).reset_index()
+
+    stats = stats.sort_values(group_cols)
+    stats.columns = ['_'.join(col).strip('_') for col in stats.columns.values]
+
+    for col in stats.columns:
+        if any(x in col for x in ["mean", "std"]):
+            stats[col] = stats[col].map(lambda x: "" if pd.isna(x) else f"{x:.4f}")
+
+    print("\nAggregated Results (Mean ± Std across seeds):")
+    print(stats.to_string(index=False))
+    stats.to_csv(output, index=False)
+    print(f"\nWrote {len(stats)} rows to {output}")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--projects", type=str, nargs='+', default=["causal-re-final-split"], help="List of W&B projects to fetch results from.")
-    parser.add_argument("--entity", type=str, required=True) #wandb username
+    parser.add_argument("--entity", type=str) #wandb username
     parser.add_argument("--output", type=str, default="aggregated_results_split.csv")
     parser.add_argument("--finished-only", action="store_true", help="Only aggregate runs whose W&B state is finished.")
+    parser.add_argument("--local_file", type=str, help="Aggregate local CSV results instead of fetching from W&B.")
     args = parser.parse_args()
+
+    if args.local_file:
+        df = pd.read_csv(args.local_file)
+        aggregate_and_write(df, args.output)
+        return
+
+    if not args.entity:
+        raise ValueError("--entity is required when fetching results from W&B. Use --local_file for offline aggregation.")
+
+    try:
+        import wandb
+    except ImportError as exc:
+        raise ImportError("wandb is required for online aggregation. Use --local_file to aggregate local results.") from exc
 
     api = wandb.Api()
     data = []
@@ -143,27 +186,7 @@ def main():
         print("No results found. Please check your entity/project name, project names, run states, and metric names.")
         return
 
-    # Group by all experimental settings (excluding seed) and aggregate
-    stats = df.groupby(["model", "dataset", "k", "eval_subset"], dropna=False).agg({
-        "accuracy": ["mean", "std"],
-        "f1": ["mean", "std"]
-    }).reset_index()
-
-    # Sort by model, dataset, and k for a cleaner report
-    stats = stats.sort_values(["model", "dataset", "k", "eval_subset"])
-
-    # Flatten the multi-index columns for readability (e.g., accuracy_mean)
-    stats.columns = ['_'.join(col).strip('_') for col in stats.columns.values]
-    
-    # Optional: Format as percentages or round
-    for col in stats.columns:
-        if any(x in col for x in ["mean", "std"]):
-            stats[col] = stats[col].map(lambda x: f"{x:.4f}")
-
-    print("\nAggregated Results (Mean ± Std across seeds):")
-    print(stats.to_string(index=False))
-    stats.to_csv(args.output, index=False)
-    print(f"\nWrote {len(stats)} rows to {args.output}")
+    aggregate_and_write(df, args.output)
 
 if __name__ == "__main__":
     main()

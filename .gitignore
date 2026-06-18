@@ -10,6 +10,8 @@ __pycache__/
 *.pyc
 .env
 *.csv
+!results/
+!results/*.csv
 *.tsv
 *.json
 *.jsonl

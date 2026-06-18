@@ -4,9 +4,9 @@ from sklearn.metrics import classification_report, f1_score, accuracy_score
 from sklearn.utils import compute_sample_weight
 from src.data.data import load_and_process
 from src.data.generate_k_shot import generate_k_shot_examples
+from src.utils.experiment_logging import append_result, init_wandb, wandb_finish, wandb_log
 import argparse
 import numpy as np
-import wandb
 
 def parse_sentence(sentence):
     """Extract tokens and entity spans from SemEval formatted sentences."""
@@ -61,9 +61,13 @@ def collapse_label(l):
 
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--dataset", type=str, default="semeval", help="Dataset to use: semeval or clean.")
+parser.add_argument("--dataset", type=str, default="semeval", help="Dataset to use: semeval or causalnews.")
 parser.add_argument("--k", type=int, default=-1, help="k-shot size. Use -1 for full dataset.")
 parser.add_argument("--seed", type=int, default=42)
+parser.add_argument("--results_file", type=str, default="results/local_results.csv")
+parser.add_argument("--experiment_name", type=str, default="manual")
+parser.add_argument("--no_wandb", action="store_true")
+parser.add_argument("--use_wandb", action="store_true")
 args = parser.parse_args()
 np.random.seed(args.seed)
 
@@ -97,7 +101,7 @@ y_pred = nb.predict(X_test_vec)
 print(classification_report(y_test, y_pred))
 
 run_name = f"baseline-{args.dataset}-k{args.k}-s{args.seed}" if args.k != -1 else f"baseline-{args.dataset}-full-s{args.seed}"
-wandb.init(project="causal-re-final-split", name=run_name, config=args)
+wandb_run = init_wandb("causal-re-final-split", run_name, vars(args), enabled=args.use_wandb and not args.no_wandb)
 
 labels = [l for l in nb.classes_ if l != 2]
 macro_f1 = f1_score(y_test, y_pred, average="macro", labels=labels) #Macro F1 without "Other" class
@@ -106,7 +110,23 @@ metrics = {
     "eval_accuracy": accuracy_score(y_test, y_pred),
     "eval_f1": macro_f1
 }
-wandb.log(metrics)
+wandb_log(wandb_run, metrics)
+append_result(
+    args.results_file,
+    {
+        "experiment": args.experiment_name,
+        "model": "baseline",
+        "dataset": args.dataset,
+        "k": args.k,
+        "seed": args.seed,
+        "eval_subset": "test",
+        "accuracy": metrics["eval_accuracy"],
+        "f1": metrics["eval_f1"],
+        "train_examples": len(train_set),
+        "test_examples": len(dataset["test"]),
+    },
+)
+wandb_finish(wandb_run)
 
 
 # Evaluate F1 on collapsed labels for full classification task (9 labels)
