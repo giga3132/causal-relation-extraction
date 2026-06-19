@@ -1,0 +1,15 @@
+.git
+.venv
+__pycache__/
+*.pyc
+.env
+wandb/
+outputs/
+results/
+checkpoint-*/
+runs/
+*.bin
+*.pt
+*.pth
+*.safetensors
+aggregated_results*.csv

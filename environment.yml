@@ -1,0 +1,20 @@
+name: causal
+channels:
+  - conda-forge
+dependencies:
+  - python=3.14
+  - pip
+  - pip:
+      - accelerate==1.13.0
+      - datasets==4.6.1
+      - evaluate==0.4.6
+      - huggingface-hub==1.5.0
+      - numpy==2.4.4
+      - pandas==3.0.2
+      - safetensors==0.7.0
+      - scikit-learn==1.8.0
+      - tokenizers==0.22.2
+      - torch==2.10.0
+      - tqdm==4.67.3
+      - transformers==5.2.0
+      - wandb==0.25.1
